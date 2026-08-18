@@ -1,5 +1,5 @@
 /**
- * dsh-multi-server - client half (xterm.js, multi-server SSH terminal panel).
+ * dsh-ssh-hub - client half (xterm.js, multi-server SSH terminal panel).
  *
  * A bottom panel (Codex/VS Code style, same interaction language as
  * dsh-plugin-terminal) for managing SSH servers and opening multiple live
@@ -16,12 +16,12 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
-const PREFIX = "/multi-server";
-const HEIGHT_KEY = "dsh-multi-server.height";
+const PREFIX = "/ssh-hub";
+const HEIGHT_KEY = "dsh-ssh-hub.height";
 const MIN_HEIGHT = 120;
 
 /* xterm stylesheet served by the host plugin */
-const XTERM_CSS_TAG = "dsh-multi-server-xterm-css";
+const XTERM_CSS_TAG = "dsh-ssh-hub-xterm-css";
 if (typeof document !== "undefined" && document.getElementById(XTERM_CSS_TAG) === null) {
   const link = document.createElement("link");
   link.id = XTERM_CSS_TAG;
@@ -30,7 +30,7 @@ if (typeof document !== "undefined" && document.getElementById(XTERM_CSS_TAG) ==
   document.head.appendChild(link);
 }
 
-const STYLE_TAG = "dsh-multi-server-styles";
+const STYLE_TAG = "dsh-ssh-hub-styles";
 const CSS = `
 .dmsRoot{position:fixed;bottom:0;z-index:50;font-family:Inter,var(--dsw-font-family)}
 .dmsBar{box-sizing:border-box;width:100%;height:34px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--dsw-specific-tip);border-top:1px solid var(--dsw-alias-border-l1);cursor:pointer;color:var(--dsw-alias-label-primary);text-align:left;user-select:none;-webkit-user-select:none}
@@ -742,7 +742,7 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
       const body = await api("/servers");
       setServers(body.servers ?? []);
     } catch (e) {
-      console.error("[dsh-multi-server] load servers failed:", e);
+      console.error("[dsh-ssh-hub] load servers failed:", e);
     } finally {
       setLoading(false);
     }
@@ -755,7 +755,7 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
   // restore previous panel state across refresh
   React.useEffect(() => {
     try {
-      const prev = localStorage.getItem("dsh-multi-server.open");
+      const prev = localStorage.getItem("dsh-ssh-hub.open");
       if (prev === "1" && tabs.length === 0) setOpen(true);
     } catch {
       /* ignore */
@@ -775,7 +775,7 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
 
   React.useEffect(() => {
     try {
-      localStorage.setItem("dsh-multi-server.open", open ? "1" : "0");
+      localStorage.setItem("dsh-ssh-hub.open", open ? "1" : "0");
     } catch {
       /* ignore */
     }

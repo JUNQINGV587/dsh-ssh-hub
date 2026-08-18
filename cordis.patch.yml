@@ -1,7 +1,7 @@
-# dsh-multi-server bundle patch — mounts the multi-server SSH terminal panel
+# dsh-ssh-hub bundle patch — mounts the multi-server SSH terminal panel
 # as a profile layer. Declared by package.json's dsh.bundle.patch: installing
-# the package via `dsh plugin --profile web add dsh-multi-server` reconciles
+# the package via `dsh plugin --profile web add dsh-ssh-hub` reconciles
 # it into dsh.profile.bundles and this layer is applied automatically.
 - insert:
-  - id: multi-server
-    name: dsh-multi-server
+  - id: ssh-hub
+    name: dsh-ssh-hub

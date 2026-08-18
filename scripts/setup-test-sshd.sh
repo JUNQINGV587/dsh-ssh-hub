@@ -5,7 +5,7 @@
 set -euo pipefail
 
 PORT="${SSH_TEST_PORT:-2222}"
-WORK="${SSH_TEST_WORK:-/tmp/dsh-multi-server-test-sshd}"
+WORK="${SSH_TEST_WORK:-/tmp/dsh-ssh-hub-test-sshd}"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 

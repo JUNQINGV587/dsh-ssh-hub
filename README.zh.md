@@ -1,10 +1,10 @@
-# dsh-multi-server
+# dsh-ssh-hub
 
 > DeepSeek Harness（DSH）Web GUI 的多服务器 SSH 终端面板插件。
 
 集中管理一批 SSH 服务器，在底部面板里**同时打开多个交互式终端**——相当于把轻量级多标签 SSH 客户端内建进 DSH 会话。
 
-![panel](https://raw.githubusercontent.com/JUNQINGV587/dsh-multi-server/main/docs/screenshot.png)
+![panel](https://raw.githubusercontent.com/JUNQINGV587/dsh-ssh-hub/main/docs/screenshot.png)
 
 ## 特性
 
@@ -25,13 +25,13 @@
 ## 安装
 
 ```sh
-dsh plugin --profile web add dsh-multi-server
+dsh plugin --profile web add dsh-ssh-hub
 ```
 
 或从本地源码安装：
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-multi-server
+dsh plugin --profile web add /path/to/dsh-ssh-hub
 ```
 
 安装后重启 DSH、刷新浏览器，即可使用终端面板。
@@ -60,7 +60,7 @@ dsh plugin --profile web add /path/to/dsh-multi-server
 
 ## 安全说明
 
-- 凭据存储在 `$DSH_HOME/plugin-data/multi-server/servers.json`（默认 `~/.dsh/…`），文件权限 `0600`。
+- 凭据存储在 `$DSH_HOME/plugin-data/ssh-hub/servers.json`（默认 `~/.dsh/…`），文件权限 `0600`。
 - REST API 永不返回密码或私钥，只返回 `hasPassword` / `hasPrivateKey` 标记。
 - 终端 WebSocket 做了同源校验：跨源页面无法连接会话。
 - 连接遵循服务器的 host key 策略（`strictHostKey` 默认关闭，需要更严格校验可开启）。
@@ -76,7 +76,7 @@ npm test           # 集成测试（对接本地测试 sshd，见 tests/）
 
 ### 工作原理
 
-- **host 半**（`src/host/`）：cordis 插件（`inject: ['webServer']`），暴露 `/multi-server` REST API 与按会话注册的 WebSocket upgrade 路由；SSH 走 [`ssh2`](https://github.com/mscdex/ssh2)。
+- **host 半**（`src/host/`）：cordis 插件（`inject: ['webServer']`），暴露 `/ssh-hub` REST API 与按会话注册的 WebSocket upgrade 路由；SSH 走 [`ssh2`](https://github.com/mscdex/ssh2)。
 - **client 半**（`src/client/`）：预构建 React bundle，注入 `conversation.input.dock` 槽位，终端模拟器用 [`@xterm/xterm`](https://github.com/xtermjs/xterm.js)。
 - 数据流：`xterm → ws → ssh2 stream → 远端 shell`，输出原路返回。
 

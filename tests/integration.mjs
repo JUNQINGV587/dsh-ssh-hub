@@ -1,5 +1,5 @@
 /**
- * Integration test for dsh-multi-server — runs the real host half against a
+ * Integration test for dsh-ssh-hub — runs the real host half against a
  * DSH-like loopback server and a real SSH target.
  *
  *   Prerequisites:
@@ -45,7 +45,7 @@ const ctx = {
 };
 
 process.env.DSH_HOME = ROOT + ".test-home";
-rmSync(process.env.DSH_HOME + "/plugin-data/multi-server", {
+rmSync(process.env.DSH_HOME + "/plugin-data/ssh-hub", {
   recursive: true,
   force: true,
 });
@@ -102,7 +102,7 @@ async function req(path, method = "GET", body) {
 
 function openWs(sessionId, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/multi-server/ws/${sessionId}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/ws/${sessionId}`);
     const timer = setTimeout(() => reject(new Error("ws open timeout")), timeoutMs);
     ws.on("open", () => {
       clearTimeout(timer);
@@ -118,7 +118,7 @@ function openWs(sessionId, timeoutMs = 8000) {
 /* ---------- scenario ---------- */
 console.log("1. server CRUD");
 
-const created = await req("/multi-server/servers", "POST", {
+const created = await req("/ssh-hub/servers", "POST", {
   name: "集成测试机",
   host: SSH_HOST,
   port: SSH_PORT,
@@ -133,12 +133,12 @@ check("response strips secrets", created.body?.server?.privateKey === undefined 
 check("hasPrivateKey flag set", created.body?.server?.hasPrivateKey === true);
 check("name defaults OK", created.body?.server?.name === "集成测试机");
 
-const listed = await req("/multi-server/servers");
+const listed = await req("/ssh-hub/servers");
 check("GET /servers lists it", listed.body?.servers?.some((s) => s.id === serverId));
 check("list strips secrets too", listed.body?.servers?.every((s) => s.privateKey === undefined && s.password === undefined));
 
 console.log("1b. update (PUT) keeps id and secret, no duplicate");
-const updated = await req(`/multi-server/servers/${serverId}`, "PUT", {
+const updated = await req(`/ssh-hub/servers/${serverId}`, "PUT", {
   name: "集成测试机-改",
   host: SSH_HOST,
   port: SSH_PORT,
@@ -149,7 +149,7 @@ const updated = await req(`/multi-server/servers/${serverId}`, "PUT", {
 check("PUT updates same id", updated.body?.server?.id === serverId, JSON.stringify(updated.body));
 check("PUT applies new name", updated.body?.server?.name === "集成测试机-改");
 check("PUT preserves secret", updated.body?.server?.hasPrivateKey === true);
-const listed1b = await req("/multi-server/servers");
+const listed1b = await req("/ssh-hub/servers");
 check(
   "no duplicate created by PUT",
   listed1b.body?.servers?.filter((s) => s.id === serverId).length === 1 &&
@@ -158,12 +158,12 @@ check(
 );
 
 console.log("2. connectivity test");
-const tested = await req(`/multi-server/servers/${serverId}/test`, "POST");
+const tested = await req(`/ssh-hub/servers/${serverId}/test`, "POST");
 check("POST /servers/:id/test ok", tested.body?.ok === true, JSON.stringify(tested.body));
 check("latency reported", typeof tested.body?.latencyMs === "number");
 
 console.log("3. unsaved-form test route");
-const unsaved = await req("/multi-server/servers/test", "POST", {
+const unsaved = await req("/ssh-hub/servers/test", "POST", {
   host: SSH_HOST,
   port: SSH_PORT,
   username: "root",
@@ -173,7 +173,7 @@ const unsaved = await req("/multi-server/servers/test", "POST", {
 check("POST /servers/test ok", unsaved.body?.ok === true, JSON.stringify(unsaved.body));
 
 console.log("4. terminal session over WebSocket");
-const sess = await req("/multi-server/sessions", "POST", { serverId, cols: 80, rows: 24 });
+const sess = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
 check("POST /sessions opens", sess.status === 200 && typeof sess.body?.id === "string", JSON.stringify(sess.body));
 const sessionId = sess.body?.id;
 
@@ -194,24 +194,24 @@ const output = await new Promise((resolve, reject) => {
 });
 check("terminal echoes command output", output.includes("DSH_MS_OK") && output.includes("root"), output.slice(-200));
 
-const sessionsNow = await req("/multi-server/sessions");
+const sessionsNow = await req("/ssh-hub/sessions");
 check("GET /sessions lists live session", sessionsNow.body?.sessions?.some((s) => s.id === sessionId));
 check("session label correct", sessionsNow.body?.sessions?.find((s) => s.id === sessionId)?.label === `root@${SSH_HOST}:${SSH_PORT}`);
 
 ws.close();
 
 await new Promise((r) => setTimeout(r, 500));
-const sessionsAfter = await req("/multi-server/sessions");
+const sessionsAfter = await req("/ssh-hub/sessions");
 check("session torn down after ws close", !sessionsAfter.body?.sessions?.some((s) => s.id === sessionId));
 
 console.log("5. cleanup");
-const del = await req(`/multi-server/servers/${serverId}`, "DELETE");
+const del = await req(`/ssh-hub/servers/${serverId}`, "DELETE");
 check("DELETE /servers/:id ok", del.body?.ok === true);
-const del2 = await req(`/multi-server/servers/${serverId}`, "DELETE");
+const del2 = await req(`/ssh-hub/servers/${serverId}`, "DELETE");
 check("DELETE missing -> 404", del2.status === 404);
 
 console.log("6. storage persistence");
-const listed2 = await req("/multi-server/servers");
+const listed2 = await req("/ssh-hub/servers");
 check("store empty after delete", (listed2.body?.servers?.length ?? 0) === 0);
 
 ws.close();

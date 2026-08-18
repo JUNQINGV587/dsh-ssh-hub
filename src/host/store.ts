@@ -1,7 +1,7 @@
 /**
  * Server store — persistent CRUD for SSH target configs.
  *
- * Lives at $DSH_HOME/plugin-data/multi-server/servers.json (mode 0600: the
+ * Lives at $DSH_HOME/plugin-data/ssh-hub/servers.json (mode 0600: the
  * file may contain passwords / private key material). The whole store is kept
  * in memory and flushed on every mutation; writes are serialized through a
  * promise chain so concurrent CRUD cannot interleave.
@@ -29,7 +29,7 @@ export class ServerStore {
   private writeChain: Promise<unknown> = Promise.resolve();
 
   constructor(dshHome: string) {
-    this.dir = pathJoin(dshHome, "plugin-data", "multi-server");
+    this.dir = pathJoin(dshHome, "plugin-data", "ssh-hub");
     this.file = pathJoin(this.dir, "servers.json");
     this.load();
   }
@@ -46,7 +46,7 @@ export class ServerStore {
       }
     } catch (err) {
       console.warn(
-        `[dsh-multi-server] failed to read ${this.file}: ${String(err?.message ?? err)}`,
+        `[dsh-ssh-hub] failed to read ${this.file}: ${String(err?.message ?? err)}`,
       );
     }
   }
@@ -69,7 +69,7 @@ export class ServerStore {
         renameSync(tmp, this.file);
       } catch (err) {
         console.warn(
-          `[dsh-multi-server] failed to persist servers: ${String(err?.message ?? err)}`,
+          `[dsh-ssh-hub] failed to persist servers: ${String(err?.message ?? err)}`,
         );
       }
     });
@@ -195,5 +195,5 @@ export function resolveKeyPath(p: string): string {
 
 /** Guard against directory traversal / empty storage paths (unused for now). */
 export function storageDir(dshHome: string): string {
-  return dirname(pathJoin(dshHome, "plugin-data", "multi-server", "servers.json"));
+  return dirname(pathJoin(dshHome, "plugin-data", "ssh-hub", "servers.json"));
 }

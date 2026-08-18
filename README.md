@@ -1,10 +1,10 @@
-# dsh-multi-server
+# dsh-ssh-hub
 
 > Multi-server SSH terminal panel for the DeepSeek Harness (DSH) Web GUI.
 
 Manage a list of SSH servers and open **multiple interactive terminals at once** in a bottom panel — like a lightweight web-based multi-tab SSH client built into your DSH conversation.
 
-![panel](https://raw.githubusercontent.com/JUNQINGV587/dsh-multi-server/main/docs/screenshot.png)
+![panel](https://raw.githubusercontent.com/JUNQINGV587/dsh-ssh-hub/main/docs/screenshot.png)
 
 ## Features
 
@@ -25,13 +25,13 @@ Manage a list of SSH servers and open **multiple interactive terminals at once**
 ## Installation
 
 ```sh
-dsh plugin --profile web add dsh-multi-server
+dsh plugin --profile web add dsh-ssh-hub
 ```
 
 or install from a local checkout:
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-multi-server
+dsh plugin --profile web add /path/to/dsh-ssh-hub
 ```
 
 Restart DSH afterwards, refresh the browser, and the terminal panel is available.
@@ -60,7 +60,7 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 
 ## Security notes
 
-- Credentials are stored in `$DSH_HOME/plugin-data/multi-server/servers.json` (default `~/.dsh/…`), written with mode `0600`.
+- Credentials are stored in `$DSH_HOME/plugin-data/ssh-hub/servers.json` (default `~/.dsh/…`), written with mode `0600`.
 - The REST API never returns passwords or private keys — only `hasPassword` / `hasPrivateKey` flags.
 - WebSocket terminals are same-origin gated: cross-origin pages cannot connect to a session.
 - Connection attempts honor your server's host-key policy via `strictHostKey` (default off); turn it on for stricter verification.
@@ -76,7 +76,7 @@ npm test           # integration tests against a local test sshd (see tests/)
 
 ### How it works
 
-- **Host half** (`src/host/`) is a cordis plugin (`inject: ['webServer']`) exposing a REST API under `/multi-server` plus per-session WebSocket upgrade routes. SSH is driven by [`ssh2`](https://github.com/mscdex/ssh2).
+- **Host half** (`src/host/`) is a cordis plugin (`inject: ['webServer']`) exposing a REST API under `/ssh-hub` plus per-session WebSocket upgrade routes. SSH is driven by [`ssh2`](https://github.com/mscdex/ssh2).
 - **Client half** (`src/client/`) is a prebuilt React bundle rendered into the `conversation.input.dock` slot, using [`@xterm/xterm`](https://github.com/xtermjs/xterm.js) for the terminal emulator.
 - Session data flows: `xterm → ws → ssh2 stream → remote shell`, and back.
 

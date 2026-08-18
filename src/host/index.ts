@@ -1,20 +1,20 @@
 /**
- * dsh-multi-server — host half.
+ * dsh-ssh-hub — host half.
  *
  * Owns the SSH server store and live terminal sessions, and exposes them to
  * the Web GUI through named routes on ctx.webServer (same-origin,
  * loopback-server model of DSH).
  *
- *   GET    /multi-server/servers              list servers (secrets stripped)
- *   POST   /multi-server/servers              create server
- *   PUT    /multi-server/servers/:id          update server
- *   DELETE /multi-server/servers/:id          remove server (kills its sessions)
- *   POST   /multi-server/servers/:id/test     one-shot connectivity test
- *   GET    /multi-server/xterm.css            xterm stylesheet
- *   GET    /multi-server/sessions             list live SSH sessions
- *   POST   /multi-server/sessions             open a shell on a server
- *   DELETE /multi-server/sessions/:id         close a session
- *   WS     /multi-server/ws/:id               terminal stream (data + resize)
+ *   GET    /ssh-hub/servers              list servers (secrets stripped)
+ *   POST   /ssh-hub/servers              create server
+ *   PUT    /ssh-hub/servers/:id          update server
+ *   DELETE /ssh-hub/servers/:id          remove server (kills its sessions)
+ *   POST   /ssh-hub/servers/:id/test     one-shot connectivity test
+ *   GET    /ssh-hub/xterm.css            xterm stylesheet
+ *   GET    /ssh-hub/sessions             list live SSH sessions
+ *   POST   /ssh-hub/sessions             open a shell on a server
+ *   DELETE /ssh-hub/sessions/:id         close a session
+ *   WS     /ssh-hub/ws/:id               terminal stream (data + resize)
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -24,7 +24,7 @@ import type { ServerConfig, TerminalSession, TestResult } from "./types.js";
 import { ServerStore, resolveDshHome, serverFromInput, type ServerInput } from "./store.js";
 import { testConnection, createShellSession } from "./connection.js";
 
-const PREFIX = "/multi-server";
+const PREFIX = "/ssh-hub";
 // Bundled by build.mjs into lib/client.css, next to lib/index.js.
 const XTERM_CSS_PATH = fileURLToPath(new URL("./client.css", import.meta.url));
 let xtermCss: string | null = null;
@@ -352,7 +352,7 @@ export function apply(ctx: any, _config: unknown) {
   });
 
   console.log(
-    `[dsh-multi-server] host half active; routes under ${PREFIX} (${store.list().length} servers)`,
+    `[dsh-ssh-hub] host half active; routes under ${PREFIX} (${store.list().length} servers)`,
   );
 }
 

@@ -34,7 +34,7 @@ jobs:
           sudo bash scripts/setup-test-sshd.sh &
           sleep 2
           # the sshd runs as root; let the (non-root) test process read the key
-          sudo chmod 644 /tmp/dsh-multi-server-test-sshd/client_key
+          sudo chmod 644 /tmp/dsh-ssh-hub-test-sshd/client_key
           # fail fast if sshd did not come up
           (exec 3<>"/dev/tcp/127.0.0.1/$SSH_TEST_PORT") 2>/dev/null || { echo "test sshd did not start"; exit 1; }
         env:
@@ -45,4 +45,4 @@ jobs:
         env:
           SSH_TEST_HOST: 127.0.0.1
           SSH_TEST_PORT: 2222
-          SSH_TEST_KEY: /tmp/dsh-multi-server-test-sshd/client_key
+          SSH_TEST_KEY: /tmp/dsh-ssh-hub-test-sshd/client_key

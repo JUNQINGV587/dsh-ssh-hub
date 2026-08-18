@@ -1,5 +1,5 @@
 /**
- * dsh-multi-server — build script.
+ * dsh-ssh-hub — build script.
  *
  * Two artifacts:
  *  1. lib/index.js   — host half (Node ESM), bundled from src/host/index.ts
@@ -9,7 +9,7 @@
  *                      the package's ./client export.
  *
  * The client bundle is fully self-contained except `react` (provided by the
- * DSH web shell) and xterm.css (served by the host half at /multi-server/...).
+ * DSH web shell) and xterm.css (served by the host half at /ssh-hub/...).
  */
 import { build } from "esbuild";
 import { writeFileSync, mkdirSync, copyFileSync } from "node:fs";
@@ -71,7 +71,7 @@ const factoryBody = [
   "  apply: function (ctx) {",
   "    ctx.slots.inject('conversation.input.dock', function () {",
   "      return ctx.slots.register(",
-  "        { name: 'conversation.input.dock', id: 'multi-server', order: 20 },",
+  "        { name: 'conversation.input.dock', id: 'ssh-hub', order: 20 },",
   "        __panel",
   "      );",
   "    });",
@@ -82,11 +82,11 @@ const factoryBody = [
 
 const finalJs = [
   "/**",
-  " * dsh-multi-server - client bundle (multi-server SSH terminal panel).",
+  " * dsh-ssh-hub - client bundle (multi-server SSH terminal panel).",
   " * Built by build.mjs from src/client/client-main.tsx. Do not edit by hand.",
   " */",
   "window.__ModuleLoader__.load({",
-  "  id: 'dsh-multi-server',",
+  "  id: 'dsh-ssh-hub',",
   "  factory: (require) => {",
   "    " + factoryBody,
   "  },",

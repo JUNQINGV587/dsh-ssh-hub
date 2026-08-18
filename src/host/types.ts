@@ -1,5 +1,5 @@
 /**
- * Shared types for dsh-multi-server.
+ * Shared types for dsh-ssh-hub.
  *
  * A "server" is a named SSH target the user manages from the panel. Secrets
  * (password / private key material) are kept out of every API response — the
