@@ -17,6 +17,11 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "../shared/terminal-themes.mjs";
+/* Settings card + the shared bound settings scope (rc.7 settings.plugin.item).
+ * getSettingsScope is imported for module-internal use (the theme chain);
+ * SettingsCard/setSettingsScope are re-exported for the build.mjs wrapper. */
+import { getSettingsScope } from "./settings-card.js";
+export { SettingsCard, setSettingsScope } from "./settings-card.js";
 
 const PREFIX = "/ssh-hub";
 const HEIGHT_KEY = "dsh-ssh-hub.height";
@@ -182,6 +187,34 @@ function getGuiScheme(): GuiScheme {
   return currentGuiScheme;
 }
 
+/* ---------------- Server Defaults terminal-theme signal ---------------- */
+/**
+ * The `defaultTerminalTheme` Server Default, pushed from the bound settings
+ * scope (rc.7). Middle layer of the theme chain: local Theme Override wins,
+ * then this, then the GUI scheme. Stays "auto" on DSH without settings.
+ */
+type DefaultTheme = "auto" | "dark" | "light";
+let currentDefaultTheme: DefaultTheme = "auto";
+const defaultThemeListeners = new Set<() => void>();
+
+function pushDefaultTheme(v: unknown) {
+  const next: DefaultTheme = v === "dark" || v === "light" || v === "auto" ? v : "auto";
+  if (next === currentDefaultTheme) return;
+  currentDefaultTheme = next;
+  for (const l of [...defaultThemeListeners]) l();
+}
+
+function subscribeDefaultTheme(listener: () => void) {
+  defaultThemeListeners.add(listener);
+  return () => {
+    defaultThemeListeners.delete(listener);
+  };
+}
+
+function getDefaultTheme(): DefaultTheme {
+  return currentDefaultTheme;
+}
+
 /** Open xterm instances by tab id, for hot theme swapping. */
 const termRegistry = new Map<string, Terminal>();
 
@@ -216,7 +249,17 @@ interface ServerView {
   hasPassword: boolean;
   hasPrivateKey: boolean;
   remoteCwd?: string;
+  readyTimeout?: number;
+  keepaliveInterval?: number;
   strictHostKey?: boolean;
+}
+
+/** Server Defaults as served by GET /ssh-hub/defaults (seconds at this seam). */
+interface ServerDefaults {
+  defaultReadyTimeoutSec: number;
+  defaultKeepaliveIntervalSec: number;
+  defaultStrictHostKey: boolean;
+  defaultTerminalTheme: "auto" | "dark" | "light";
 }
 
 type TabStatus = "connecting" | "live" | "closed" | "error";
@@ -443,10 +486,13 @@ function XtermPane({
 
 function ServerForm({
   initial,
+  defaults,
   onSaved,
   onCancel,
 }: {
   initial: ServerView | null;
+  /** Current Server Defaults, for the placeholder text; may be null before first load. */
+  defaults: ServerDefaults | null;
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -459,6 +505,16 @@ function ServerForm({
   const [privateKey, setPrivateKey] = React.useState("");
   const [passphrase, setPassphrase] = React.useState("");
   const [remoteCwd, setRemoteCwd] = React.useState(initial?.remoteCwd ?? "");
+  // Advanced tunables: empty / "inherit" = leave the Server Default in charge.
+  const [timeoutSec, setTimeoutSec] = React.useState(
+    initial?.readyTimeout === undefined ? "" : String(Math.round(initial.readyTimeout / 1000)),
+  );
+  const [keepaliveSec, setKeepaliveSec] = React.useState(
+    initial?.keepaliveInterval === undefined ? "" : String(Math.round(initial.keepaliveInterval / 1000)),
+  );
+  const [strictHostKey, setStrictHostKey] = React.useState<"inherit" | "on" | "off">(
+    initial?.strictHostKey === undefined ? "inherit" : initial.strictHostKey ? "on" : "off",
+  );
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
   const [testRes, setTestRes] = React.useState<{ ok: boolean; message: string } | null>(null);
@@ -476,6 +532,10 @@ function ServerForm({
     if (authKind === "password" && password.length > 0) p.password = password;
     if (authKind === "privateKey" && privateKey.length > 0) p.privateKey = privateKey;
     if (authKind === "privateKey" && passphrase.length > 0) p.passphrase = passphrase;
+    // Tunables: only send when set (blank = inherit the Server Default).
+    if (timeoutSec.trim() !== "") p.readyTimeout = Number(timeoutSec) * 1000;
+    if (keepaliveSec.trim() !== "") p.keepaliveInterval = Number(keepaliveSec) * 1000;
+    if (strictHostKey !== "inherit") p.strictHostKey = strictHostKey === "on";
     return p;
   };
 
@@ -488,6 +548,20 @@ function ServerForm({
     if (username.trim() === "") {
       setErr("用户名不能为空");
       return;
+    }
+    if (timeoutSec.trim() !== "") {
+      const n = Number(timeoutSec);
+      if (!Number.isInteger(n) || n < 3 || n > 120) {
+        setErr("连接超时需为 3–120 的整数（秒），留空则继承全局默认。");
+        return;
+      }
+    }
+    if (keepaliveSec.trim() !== "") {
+      const n = Number(keepaliveSec);
+      if (!Number.isInteger(n) || n < 0 || n > 300) {
+        setErr("Keepalive 间隔需为 0–300 的整数（秒），0 为禁用，留空则继承全局默认。");
+        return;
+      }
     }
     setBusy(true);
     try {
@@ -589,6 +663,37 @@ function ServerForm({
         <input className="dmsInput" placeholder="/root/workspace" value={remoteCwd} onChange={(e) => setRemoteCwd(e.target.value)} />
         <span className="dmsHint">登录后自动 cd 到该目录</span>
       </div>
+      <div className="dmsField">
+        <label>连接超时（秒，留空继承全局默认）</label>
+        <input
+          className="dmsInput"
+          inputMode="numeric"
+          placeholder={defaults ? `留空使用全局默认（${defaults.defaultReadyTimeoutSec} 秒）` : "3–120"}
+          value={timeoutSec}
+          onChange={(e) => setTimeoutSec(e.target.value.replace(/[^0-9]/g, ""))}
+        />
+        <span className="dmsHint">3–120 秒；留空时按全局默认连接超时</span>
+      </div>
+      <div className="dmsField">
+        <label>Keepalive 间隔（秒，留空继承全局默认）</label>
+        <input
+          className="dmsInput"
+          inputMode="numeric"
+          placeholder={defaults ? `留空使用全局默认（${defaults.defaultKeepaliveIntervalSec} 秒）` : "0–300"}
+          value={keepaliveSec}
+          onChange={(e) => setKeepaliveSec(e.target.value.replace(/[^0-9]/g, ""))}
+        />
+        <span className="dmsHint">0–300 秒，0 为禁用；留空时按全局默认</span>
+      </div>
+      <div className="dmsField">
+        <label>严格主机密钥校验</label>
+        <select className="dmsInput" value={strictHostKey} onChange={(e) => setStrictHostKey(e.target.value as "inherit" | "on" | "off")}>
+          <option value="inherit">继承全局默认</option>
+          <option value="on">开启</option>
+          <option value="off">关闭</option>
+        </select>
+        <span className="dmsHint">开启后连接要求 known-hosts 条目</span>
+      </div>
       {err !== "" && <div className="dmsErrText">{err}</div>}
       {testRes !== null && (
         <div className={testRes.ok ? "dmsOkText" : "dmsErrText"}>{testRes.message}</div>
@@ -613,11 +718,13 @@ function ServerForm({
 
 function ServerDrawer({
   servers,
+  defaults,
   onClose,
   onChanged,
   onConnect,
 }: {
   servers: ServerView[];
+  defaults: ServerDefaults | null;
   onClose: () => void;
   onChanged: () => void;
   onConnect: (s: ServerView) => void;
@@ -740,6 +847,7 @@ function ServerDrawer({
           {editing !== null || adding ? (
             <ServerForm
               initial={editing}
+              defaults={defaults}
               onSaved={() => {
                 setEditing(null);
                 setAdding(false);
@@ -899,7 +1007,20 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
       return next;
     });
   };
-  const resolvedTheme: "dark" | "light" = override === "auto" ? guiScheme : override;
+  // Theme chain: local override (dark/light) > defaultTerminalTheme > GUI.
+  const defaultTheme = React.useSyncExternalStore(subscribeDefaultTheme, getDefaultTheme);
+  const resolvedTheme: "dark" | "light" =
+    override !== "auto" ? override : defaultTheme !== "auto" ? defaultTheme : guiScheme;
+
+  // Push the Server Default into the theme signal whenever the settings
+  // scope emits (hot-swaps open terminals through the existing effect).
+  React.useEffect(() => {
+    const scope = getSettingsScope();
+    if (scope === null) return;
+    const push = () => pushDefaultTheme(scope.getSnapshot().value?.defaultTerminalTheme);
+    push();
+    return scope.subscribe(push);
+  }, []);
 
   // Terminal Area surface colors, applied declaratively so they are correct
   // the moment the panel body mounts (an effect would miss the mount when the
@@ -933,9 +1054,21 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
     }
   }, []);
 
+  /** Server Defaults power the form placeholders; refresh whenever they change. */
+  const [defaults, setDefaults] = React.useState<ServerDefaults | null>(null);
+  const refreshDefaults = React.useCallback(async () => {
+    try {
+      const body = await api("/defaults");
+      setDefaults(body as ServerDefaults);
+    } catch {
+      /* route unavailable on older hosts — placeholders fall back to static copy */
+    }
+  }, []);
+
   React.useEffect(() => {
     refreshServers();
-  }, [refreshServers]);
+    refreshDefaults();
+  }, [refreshServers, refreshDefaults]);
 
   // restore previous panel state across refresh
   React.useEffect(() => {
@@ -956,6 +1089,16 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // 「管理服务器」 entry from the settings card: open the panel and the drawer.
+  React.useEffect(() => {
+    const onOpenServers = () => {
+      setOpen(true);
+      setDrawer(true);
+    };
+    window.addEventListener("dsh-ssh-hub:open-servers", onOpenServers);
+    return () => window.removeEventListener("dsh-ssh-hub:open-servers", onOpenServers);
   }, []);
 
   React.useEffect(() => {
@@ -1189,6 +1332,7 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
       {drawer && (
         <ServerDrawer
           servers={servers}
+          defaults={defaults}
           onClose={() => setDrawer(false)}
           onChanged={refreshServers}
           onConnect={(s) => {

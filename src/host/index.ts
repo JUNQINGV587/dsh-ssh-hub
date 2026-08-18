@@ -13,6 +13,7 @@
  *   GET    /ssh-hub/servers/export       secret-stripped export (version 1)
  *   POST   /ssh-hub/servers/import       import (always creates new servers)
  *   GET    /ssh-hub/xterm.css            xterm stylesheet
+ *   GET    /ssh-hub/defaults             current Server Defaults (seconds)
  *   GET    /ssh-hub/sessions             list live SSH sessions
  *   POST   /ssh-hub/sessions             open a shell on a server
  *   DELETE /ssh-hub/sessions/:id         close a session
@@ -22,11 +23,35 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import type { ServerConfig, TerminalSession, TestResult } from "./types.js";
+import type { ServerConfig, ServerDefaults, TerminalSession, TestResult } from "./types.js";
 import { ServerStore, resolveDshHome, serverFromInput, SECRET_FIELDS, type ServerInput } from "./store.js";
 import { testConnection, createShellSession } from "./connection.js";
 
 const PREFIX = "/ssh-hub";
+/** Schema defaults for the `ssh-hub` settings namespace (ADR 0003). */
+const DEFAULT_SERVER_DEFAULTS: ServerDefaults = {
+  defaultReadyTimeoutSec: 15,
+  defaultKeepaliveIntervalSec: 30,
+  defaultStrictHostKey: false,
+  defaultTerminalTheme: "auto",
+};
+
+/** Project a resolved settings section into ServerDefaults, filling defaults. */
+function projectServerDefaults(raw: unknown): ServerDefaults {
+  const v = (raw ?? {}) as Record<string, unknown>;
+  const num = (x: unknown, d: number) => (typeof x === "number" && Number.isFinite(x) ? x : d);
+  const clamp = (x: number, min: number, max: number) => Math.min(max, Math.max(min, x));
+  const theme =
+    v.defaultTerminalTheme === "dark" || v.defaultTerminalTheme === "light"
+      ? v.defaultTerminalTheme
+      : "auto";
+  return {
+    defaultReadyTimeoutSec: clamp(num(v.defaultReadyTimeoutSec, 15), 3, 120),
+    defaultKeepaliveIntervalSec: clamp(num(v.defaultKeepaliveIntervalSec, 30), 0, 300),
+    defaultStrictHostKey: v.defaultStrictHostKey === true,
+    defaultTerminalTheme: theme,
+  };
+}
 // Bundled by build.mjs into lib/client.css, next to lib/index.js.
 const XTERM_CSS_PATH = fileURLToPath(new URL("./client.css", import.meta.url));
 let xtermCss: string | null = null;
@@ -42,6 +67,57 @@ export const inject = ["webServer"];
 export function apply(ctx: any, _config: unknown) {
   const webServer = ctx.webServer;
   const store = new ServerStore(resolveDshHome());
+
+  /**
+   * Current Server Defaults. Starts at the schema defaults; replaced when the
+   * rc.7 settings layer resolves (see below).
+   */
+  let currentDefaults: () => ServerDefaults = () => DEFAULT_SERVER_DEFAULTS;
+
+  // Register the `ssh-hub` settings namespace when the rc.7 settings service
+  // is available. Dynamic import keeps the plugin loadable on older DSH
+  // profiles that lack the @deepseek-ai/dsh-settings package; when the
+  // package exists but the service is absent, installSettingsSection's
+  // ctx.inject(["settings"]) simply never fires, so the hardcoded constants
+  // stay authoritative (ADR 0003).
+  void Promise.all([
+    import("@deepseek-ai/dsh-settings"),
+    import("@deepseek-ai/schemastery"),
+  ])
+    .then(([{ installSettingsSection, settingsNamespace }, schemastery]) => {
+      const z = (schemastery as any).default ?? schemastery;
+      const Config = z.object({
+        defaultReadyTimeoutSec: z
+          .number().step(1).min(3).max(120)
+          .default(DEFAULT_SERVER_DEFAULTS.defaultReadyTimeoutSec),
+        defaultKeepaliveIntervalSec: z
+          .number().step(1).min(0).max(300)
+          .default(DEFAULT_SERVER_DEFAULTS.defaultKeepaliveIntervalSec),
+        defaultStrictHostKey: z.boolean().default(DEFAULT_SERVER_DEFAULTS.defaultStrictHostKey),
+        defaultTerminalTheme: z
+          .union([z.const("auto"), z.const("dark"), z.const("light")])
+          .default(DEFAULT_SERVER_DEFAULTS.defaultTerminalTheme),
+      });
+      installSettingsSection(ctx, settingsNamespace("ssh-hub"), Config, {}, {
+        setSource: (source) => {
+          currentDefaults = () => projectServerDefaults(source());
+        },
+        onChange: () => {},
+      });
+    })
+    .catch(() => {
+      /* pre-rc.7 DSH: no settings namespace; hardcoded constants apply */
+    });
+
+  /** Connection tunables from the current Server Defaults (ms at this seam). */
+  const connTunables = () => {
+    const d = currentDefaults();
+    return {
+      readyTimeoutMs: d.defaultReadyTimeoutSec * 1000,
+      keepaliveIntervalMs: d.defaultKeepaliveIntervalSec * 1000,
+      strictHostKey: d.defaultStrictHostKey,
+    };
+  };
 
   /** live terminal sessions: id -> session */
   const sessions = new Map<string, TerminalSession>();
@@ -181,7 +257,7 @@ export function apply(ctx: any, _config: unknown) {
     const cols = clampInt(body.cols, 20, 500, 80);
     const rows = clampInt(body.rows, 5, 200, 24);
     try {
-      const session = await createShellSession(server, cols, rows);
+      const session = await createShellSession(server, cols, rows, connTunables());
       const id = makeId();
       session.id = id;
       sessions.set(id, session);
@@ -235,7 +311,7 @@ export function apply(ctx: any, _config: unknown) {
         if (rest === "/servers/test" && method === "POST") {
           const body = await readBody(req);
           const server = serverFromInput(validateInput(body));
-          const result: TestResult = await testConnection(server);
+          const result: TestResult = await testConnection(server, connTunables());
           json(res, 200, result);
           return;
         }
@@ -277,6 +353,12 @@ export function apply(ctx: any, _config: unknown) {
           return;
         }
 
+        // ---- Server Defaults (read-only; powers the form's placeholders) ----
+        if (rest === "/defaults" && method === "GET") {
+          json(res, 200, currentDefaults());
+          return;
+        }
+
         const serverMatch = rest.match(/^\/servers\/([^/]+)(?:\/(.*))?$/);
         if (serverMatch !== null) {
           const id = serverMatch[1];
@@ -314,7 +396,7 @@ export function apply(ctx: any, _config: unknown) {
               json(res, 404, { error: "no such server" });
               return;
             }
-            const result: TestResult = await testConnection(server);
+            const result: TestResult = await testConnection(server, connTunables());
             json(res, 200, result);
             return;
           }

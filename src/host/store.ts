@@ -177,9 +177,12 @@ function normalizeServer(raw: Record<string, unknown>): ServerConfig {
     privateKey: typeof raw.privateKey === "string" && raw.privateKey.length > 0 ? raw.privateKey : undefined,
     passphrase: typeof raw.passphrase === "string" && raw.passphrase.length > 0 ? raw.passphrase : undefined,
     remoteCwd: typeof raw.remoteCwd === "string" && raw.remoteCwd.trim().length > 0 ? raw.remoteCwd.trim() : undefined,
-    readyTimeout: clampInt(raw.readyTimeout, 1000, 300000, 15000),
-    keepaliveInterval: clampInt(raw.keepaliveInterval, 0, 3600000, 30000),
-    strictHostKey: raw.strictHostKey === true,
+    // Tunables stay undefined when the payload omits them ("inherit"): the
+    // connection layer resolves Server field > Server Default > constant
+    // (ADR 0003). Present-but-invalid values are clamped into range.
+    readyTimeout: clampIntOrUndefined(raw.readyTimeout, 1000, 300000),
+    keepaliveInterval: clampIntOrUndefined(raw.keepaliveInterval, 0, 3600000),
+    strictHostKey: raw.strictHostKey === undefined ? undefined : raw.strictHostKey === true,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
   };
@@ -188,6 +191,12 @@ function normalizeServer(raw: Record<string, unknown>): ServerConfig {
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/** Clamp a present numeric value; leave absent values absent. */
+function clampIntOrUndefined(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 /** Resolve the DSH home directory. */

@@ -10,6 +10,20 @@ import type { WebSocket } from "ws";
 
 export type AuthKind = "password" | "privateKey" | "agent" | "none";
 
+/**
+ * Server Defaults — the plugin-level settings document (namespace `ssh-hub`).
+ * Seconds at the boundary: the settings schema and `settings.yaml` speak
+ * seconds; the connection layer converts to milliseconds. Fields with
+ * `undefined` on a Server Config inherit these; these in turn fall back to
+ * the hardcoded constants (ADR 0003).
+ */
+export interface ServerDefaults {
+  defaultReadyTimeoutSec: number;
+  defaultKeepaliveIntervalSec: number;
+  defaultStrictHostKey: boolean;
+  defaultTerminalTheme: "auto" | "dark" | "light";
+}
+
 export interface ServerConfig {
   id: string;
   /** Display name shown in the panel (defaults to user@host). */

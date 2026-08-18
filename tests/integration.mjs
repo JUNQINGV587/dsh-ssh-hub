@@ -10,6 +10,7 @@
  *   Run:  node tests/integration.mjs
  */
 import http from "node:http";
+import net from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import { fileURLToPath } from "node:url";
 import { rmSync } from "node:fs";
@@ -24,6 +25,14 @@ const SSH_KEY = process.env.SSH_TEST_KEY ?? "/tmp/sshd-test/client_key";
 /* ---------- DSH-like host ---------- */
 const routes = [];
 const upgrades = [];
+/**
+ * Minimal `settings` service stub: per-namespace user-layer sections served
+ * by `scope.get()`. `settingsAvailable` flips for the degradation case.
+ */
+const settingsSections = {};
+const registeredNamespaces = new Set();
+let settingsAvailable = true;
+
 const ctx = {
   webServer: {
     register: (r) => {
@@ -42,6 +51,22 @@ const ctx = {
     },
   },
   effect: () => {},
+  inject: (names, cb) => {
+    if (settingsAvailable && names.includes("settings")) {
+      cb({
+        effect: () => {},
+        settings: {
+          register: (ns, schema, opts) => {
+            registeredNamespaces.add(ns);
+            return {
+              get: () => settingsSections[ns] ?? {},
+              watch: () => () => {},
+            };
+          },
+        },
+      });
+    }
+  },
 };
 
 process.env.DSH_HOME = ROOT + ".test-home";
@@ -74,6 +99,26 @@ server.on("upgrade", (req, socket, head) => {
 
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
+
+/**
+ * A TCP blackhole: accepts connections and never speaks, so ssh2 stalls in
+ * the handshake until readyTimeout fires. Deterministic timeout target that
+ * does not depend on external network routing.
+ */
+const blackhole = net.createServer(() => {
+  /* accept, never send anything */
+});
+await new Promise((r) => blackhole.listen(0, "127.0.0.1", r));
+const BH_PORT = blackhole.address().port;
+
+/** Wait until the host registered the `ssh-hub` settings namespace. */
+async function waitForNamespace(timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!registeredNamespaces.has("ssh-hub") && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return registeredNamespaces.has("ssh-hub");
+}
 
 /* ---------- helpers ---------- */
 let failures = 0;
@@ -197,6 +242,75 @@ const unsaved = await req("/ssh-hub/servers/test", "POST", {
   privateKey: SSH_KEY,
 });
 check("POST /servers/test ok", unsaved.body?.ok === true, JSON.stringify(unsaved.body));
+
+console.log("2b. Server Defaults (settings namespace, three-layer resolution)");
+const nsRegistered = await waitForNamespace();
+check("ssh-hub settings namespace registered", nsRegistered);
+
+// The read-only defaults route powers the form placeholders: schema defaults
+// before any user layer, then the stub's values once set.
+const defaultsBefore = await req("/ssh-hub/defaults");
+check(
+  "GET /defaults serves schema defaults",
+  defaultsBefore.body?.defaultReadyTimeoutSec === 15 &&
+    defaultsBefore.body?.defaultKeepaliveIntervalSec === 30 &&
+    defaultsBefore.body?.defaultStrictHostKey === false &&
+    defaultsBefore.body?.defaultTerminalTheme === "auto",
+  JSON.stringify(defaultsBefore.body),
+);
+
+// Global default 3s -> a blank-field server must fail around 3s, not the
+// hardcoded 15s (+3s timer margin).
+settingsSections["ssh-hub"] = {
+  defaultReadyTimeoutSec: 3,
+  defaultKeepaliveIntervalSec: 30,
+  defaultStrictHostKey: false,
+  defaultTerminalTheme: "auto",
+};const t0 = Date.now();
+const blankDefault = await req("/ssh-hub/servers/test", "POST", {
+  host: "127.0.0.1", port: BH_PORT, username: "root", authKind: "none",
+});
+const blankElapsed = Date.now() - t0;
+check(
+  "blank-field server uses the Server Default (~3s, not 15s)",
+  blankDefault.body?.ok === false && blankElapsed >= 1500 && blankElapsed < 9000,
+  `elapsed=${blankElapsed}ms msg=${blankDefault.body?.message}`,
+);
+
+// Explicit server field (12s) must WIN over the global default (3s).
+const t1 = Date.now();
+const explicitField = await req("/ssh-hub/servers/test", "POST", {
+  host: "127.0.0.1", port: BH_PORT, username: "root", authKind: "none",
+  readyTimeout: 12000,
+});
+const explicitElapsed = Date.now() - t1;
+check(
+  "explicit server field wins over the Server Default (~12s, not 3s)",
+  explicitField.body?.ok === false && explicitElapsed >= 9000,
+  `elapsed=${explicitElapsed}ms msg=${explicitField.body?.message}`,
+);
+
+// Layered defaults reach the stored-server test route too.
+const layeredStored = await req("/ssh-hub/servers", "POST", {
+  name: "回退机", host: "127.0.0.1", port: BH_PORT, username: "root", authKind: "none",
+});
+const layeredId = layeredStored.body?.server?.id;
+const t2 = Date.now();
+const storedTest = await req(`/ssh-hub/servers/${layeredId}/test`, "POST");
+const storedElapsed = Date.now() - t2;
+check(
+  "stored-server test route layers the Server Default too",
+  storedTest.body?.ok === false && storedElapsed >= 1500 && storedElapsed < 9000,
+  `elapsed=${storedElapsed}ms msg=${storedTest.body?.message}`,
+);
+await req(`/ssh-hub/servers/${layeredId}`, "DELETE");
+const defaultsAfter = await req("/ssh-hub/defaults");
+check(
+  "GET /defaults reflects the user layer",
+  defaultsAfter.body?.defaultReadyTimeoutSec === 3 && defaultsAfter.body?.defaultKeepaliveIntervalSec === 30,
+  JSON.stringify(defaultsAfter.body),
+);
+delete settingsSections["ssh-hub"];
 
 console.log("3c. authKind switch clears orphaned secrets (ADR 0001)");
 
@@ -365,7 +479,36 @@ console.log("6. storage persistence");
 const listed2 = await req("/ssh-hub/servers");
 check("store empty after delete", (listed2.body?.servers?.length ?? 0) === 0);
 
+console.log("6b. graceful degradation without the settings service");
+// A second host instance on a DSH without `ctx.settings`: must apply without
+// throwing and still register its routes (the async registration path must
+// not blow up either).
+const noSettingsRoutes = [];
+const ctxNoSettings = {
+  webServer: {
+    register: (r) => {
+      noSettingsRoutes.push(r);
+      return () => {};
+    },
+    registerUpgrade: () => () => {},
+  },
+  effect: () => {},
+  inject: () => {},
+};
+settingsAvailable = false;
+let degraded = false;
+try {
+  apply(ctxNoSettings, {});
+  await new Promise((r) => setTimeout(r, 100)); // let the async import path settle
+  degraded = noSettingsRoutes.length > 0;
+} catch (e) {
+  console.error("  degradation apply threw:", e);
+}
+settingsAvailable = true;
+check("host applies and serves routes without the settings service", degraded);
+
 ws.close();
 server.close();
+blackhole.close();
 console.log(failures === 0 ? "\nALL TESTS PASSED" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

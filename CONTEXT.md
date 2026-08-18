@@ -20,6 +20,10 @@ _Avoid_: credentials (too broad — usernames are not secrets)
 The stored record of a Server, including its Secrets.
 _Avoid_: server object, entry
 
+**Server Defaults**:
+The plugin-level settings document (settings namespace `ssh-hub`): default ready timeout, default keepalive interval, default host-key verification, default Terminal Theme. Connection tunables resolve as **Server field > Server Default > hardcoded constant**; a blank Server field inherits the Server Default. Seconds at the settings boundary, milliseconds inside.
+_Avoid_: global defaults (too broad — they govern Server connection behavior only, not panel UI state)
+
 **Server View**:
 A Server Config with Secrets stripped, replaced by `hasPassword` / `hasPrivateKey` flags. The only representation clients ever receive.
 _Avoid_: DTO, public server
@@ -37,5 +41,5 @@ Everything inside the terminal body of the panel: the xterm canvas, pane backgro
 _Avoid_: terminal body, canvas region
 
 **Theme Override**:
-The user's manual preference for the Terminal Theme: `auto` (follow the DSH GUI theme, falling back to `prefers-color-scheme`), `dark`, or `light`. Persisted per browser. Applies to every open Terminal Session immediately.
+The user's manual preference for the Terminal Theme: `auto` (ask the layer above: the `defaultTerminalTheme` Server Default, then the DSH GUI theme, falling back to `prefers-color-scheme`), `dark`, or `light`. Persisted per browser. A `dark`/`light` override takes precedence over the Server Default; `auto` defers to it. Applies to every open Terminal Session immediately.
 _Avoid_: theme setting, mode switch

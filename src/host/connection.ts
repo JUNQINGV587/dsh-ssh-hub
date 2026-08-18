@@ -17,15 +17,53 @@ import { homedir } from "node:os";
 import type { ServerConfig, TerminalSession, TestResult } from "./types.js";
 import { resolveKeyPath } from "./store.js";
 
-export function buildSsh2Config(s: ServerConfig): ConnectConfig {
+/**
+ * Connection tunables for one attempt. The server's own field wins; when it
+ * is blank (undefined), the Server Default (from the `ssh-hub` settings
+ * namespace) applies; when neither exists, the hardcoded constant stands
+ * (ADR 0003).
+ */
+export interface ConnTunables {
+  readyTimeoutMs: number;
+  keepaliveIntervalMs: number;
+  strictHostKey: boolean;
+}
+
+/** Hardcoded fallbacks — the bottom of the resolution chain. */
+export const DEFAULT_TUNABLES: ConnTunables = {
+  readyTimeoutMs: 15000,
+  keepaliveIntervalMs: 30000,
+  strictHostKey: false,
+};
+
+/**
+ * Resolve the connection tunables for one Server: Server field > Server
+ * Default > hardcoded constant.
+ * @param s - the Server Config (fields may be undefined = "inherit").
+ * @param defaults - the effective Server Defaults, if a settings layer exists.
+ */
+export function resolveConnTunables(
+  s: ServerConfig,
+  defaults?: Partial<ConnTunables>,
+): ConnTunables {
+  return {
+    readyTimeoutMs: s.readyTimeout ?? defaults?.readyTimeoutMs ?? DEFAULT_TUNABLES.readyTimeoutMs,
+    keepaliveIntervalMs:
+      s.keepaliveIntervalMs ?? defaults?.keepaliveIntervalMs ?? DEFAULT_TUNABLES.keepaliveIntervalMs,
+    strictHostKey: s.strictHostKey ?? defaults?.strictHostKey ?? DEFAULT_TUNABLES.strictHostKey,
+  };
+}
+
+export function buildSsh2Config(s: ServerConfig, defaults?: Partial<ConnTunables>): ConnectConfig {
+  const t = resolveConnTunables(s, defaults);
   const base: ConnectConfig = {
     host: s.host,
     port: s.port,
     username: s.username,
-    readyTimeout: s.readyTimeout ?? 15000,
-    keepaliveInterval: s.keepaliveInterval ?? 30000,
+    readyTimeout: t.readyTimeoutMs,
+    keepaliveInterval: t.keepaliveIntervalMs,
     keepaliveCountMax: 3,
-    strictHostKeyChecking: s.strictHostKey === true ? "yes" : "no",
+    strictHostKeyChecking: t.strictHostKey ? "yes" : "no",
   };
 
   switch (s.authKind) {
@@ -62,10 +100,14 @@ export function buildSsh2Config(s: ServerConfig): ConnectConfig {
   return base;
 }
 
-export function testConnection(s: ServerConfig): Promise<TestResult> {
+export function testConnection(
+  s: ServerConfig,
+  defaults?: Partial<ConnTunables>,
+): Promise<TestResult> {
   return new Promise((resolve) => {
     const started = Date.now();
     const client = new Client();
+    const tunables = resolveConnTunables(s, defaults);
     let settled = false;
     const done = (result: TestResult) => {
       if (settled) return;
@@ -80,7 +122,7 @@ export function testConnection(s: ServerConfig): Promise<TestResult> {
 
     const timer = setTimeout(() => {
       done({ ok: false, message: "connection timed out" });
-    }, (s.readyTimeout ?? 15000) + 3000);
+    }, tunables.readyTimeoutMs + 3000);
 
     client
       .on("ready", () => {
@@ -110,6 +152,7 @@ export function createShellSession(
   s: ServerConfig,
   cols: number,
   rows: number,
+  defaults?: Partial<ConnTunables>,
 ): Promise<TerminalSession> {
   return new Promise((resolve, reject) => {
     const client = new Client();
@@ -184,7 +227,7 @@ export function createShellSession(
         });
       })
       .on("error", (err) => fail(err))
-      .connect(buildSsh2Config(s));
+      .connect(buildSsh2Config(s, defaults));
   });
 }
 
