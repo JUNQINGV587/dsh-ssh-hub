@@ -1519,6 +1519,9 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
   };
 
   const closeTab = async (id: string) => {
+    // Optimistic removal, then reconcile with the host: if the close request
+    // failed the session is still alive and must reappear (visible feedback,
+    // not a silent lie); if it 404'd (already reaped) it stays gone.
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.id === id);
       const next = prev.filter((t) => t.id !== id);
@@ -1527,7 +1530,26 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
       }
       return next;
     });
-    api("/sessions/" + id, { method: "DELETE" }).catch(() => {});
+    try {
+      await api("/sessions/" + id, { method: "DELETE" });
+    } catch (e) {
+      console.error("[dsh-ssh-hub] close failed, reconciling:", e);
+      try {
+        const body = await api("/sessions");
+        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
+          body.sessions ?? [];
+        setTabs(
+          remote.map((s) => ({
+            id: s.id,
+            serverId: s.serverId,
+            label: s.serverName || s.label,
+            status: s.exited ? "closed" : "connecting",
+          })),
+        );
+      } catch {
+        /* host unreachable; the session will reappear on the next rebuild */
+      }
+    }
   };
 
   const startDrag = (e: React.PointerEvent) => {
@@ -1959,6 +1981,9 @@ export function FocusView() {
     }
   };
   const closeTab = async (id: string) => {
+    // Optimistic removal, then reconcile with the host: if the close request
+    // failed the session is still alive and must reappear (visible feedback,
+    // not a silent lie); if it 404'd (already reaped) it stays gone.
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.id === id);
       const next = prev.filter((t) => t.id !== id);
@@ -1967,7 +1992,26 @@ export function FocusView() {
       }
       return next;
     });
-    api("/sessions/" + id, { method: "DELETE" }).catch(() => {});
+    try {
+      await api("/sessions/" + id, { method: "DELETE" });
+    } catch (e) {
+      console.error("[dsh-ssh-hub] close failed, reconciling:", e);
+      try {
+        const body = await api("/sessions");
+        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
+          body.sessions ?? [];
+        setTabs(
+          remote.map((s) => ({
+            id: s.id,
+            serverId: s.serverId,
+            label: s.serverName || s.label,
+            status: s.exited ? "closed" : "connecting",
+          })),
+        );
+      } catch {
+        /* host unreachable; the session will reappear on the next rebuild */
+      }
+    }
   };
   const pinnedIndex = (id: string) => grid.tiles.indexOf(id);
   const pinTab = (id: string) => {
