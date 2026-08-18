@@ -14,13 +14,23 @@
  * renders only the leading `fitCount(...)` tiles.
  */
 
+/**
+ * @typedef {Object} GridState
+ * @property {string} template - one of TEMPLATES
+ * @property {(string|null)[]} tiles - session id per Tile; index order is
+ *   visual order, which is also the degradation order (leading tiles win).
+ *
+ * GridState is the wire schema for GET/PUT /ssh-hub/grid and the
+ * /ssh-hub/grid/events pushes: the host is authoritative and both surfaces
+ * converge on the same value (ADR-0005).
+ */
+
 /** The shipped Layout Templates (ADR-0005). */
 export const TEMPLATES = ["single", "split-h", "split-v", "grid-4", "main-2"];
 
 /** A Tile needs at least this many pixels to be usable. */
 export const MIN_TILE_W = 360;
 export const MIN_TILE_H = 200;
-export const GRID_GAP = 4;
 
 /** Tiles per template. */
 export const TILE_COUNT = {

@@ -27,6 +27,9 @@ export class SessionRegistry {
 
   add(session: TerminalSession) {
     this.sessions.set(session.id, session);
+    // A session can be created with zero clients and never attached; arm the
+    // idle reclaim immediately so it cannot leak (attach cancels it).
+    if (session.wsClients.size === 0) this.detach(session.id);
   }
 
   get(id: string) {
@@ -35,6 +38,11 @@ export class SessionRegistry {
 
   list() {
     return [...this.sessions.values()];
+  }
+
+  /** All session ids — iteration that must not bypass forget(). */
+  allIds() {
+    return [...this.sessions.keys()];
   }
 
   /** A client attached: cancel any pending idle reclaim. */
@@ -58,6 +66,9 @@ export class SessionRegistry {
     s.idleTimer = setTimeout(() => {
       s.idleTimer = null;
       if (s.wsClients.size === 0) {
+        console.log(
+          `[dsh-ssh-hub] reclaiming idle session ${id} (${this.idleReclaimMs}ms without clients)`,
+        );
         this.kill(id);
         this.forget(id);
       }
@@ -85,5 +96,13 @@ export class SessionRegistry {
   forget(id: string) {
     this.sessions.delete(id);
     this.reclaimHook?.(id);
+  }
+
+  /** Kill and forget every session, notifying the reclaim hook for each. */
+  clearAll() {
+    for (const id of this.allIds()) {
+      this.kill(id);
+      this.forget(id);
+    }
   }
 }

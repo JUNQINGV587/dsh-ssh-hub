@@ -606,6 +606,16 @@ check("grid fixture session deleted", gdel.body?.ok === true);
 const g2 = await req("/ssh-hub/grid");
 check("deleting a session clears its pins", g2.body?.grid?.tiles?.[0] === null, JSON.stringify(g2.body));
 
+console.log("4e. unattached sessions are reclaimed too");
+// A session that never had a WebSocket attached must still hit the idle
+// reclaim — otherwise it leaks forever (registry arms the timer on add).
+const sess3 = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
+const sessionId3 = sess3.body?.id;
+check("unattached fixture session opened", typeof sessionId3 === "string");
+await new Promise((r) => setTimeout(r, 4500));
+const afterUnattached = await req("/ssh-hub/sessions");
+check("session with no ws ever attached is reclaimed", !afterUnattached.body?.sessions?.some((s) => s.id === sessionId3));
+
 console.log("5. cleanup");
 const del = await req(`/ssh-hub/servers/${serverId}`, "DELETE");
 check("DELETE /servers/:id ok", del.body?.ok === true);

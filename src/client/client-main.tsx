@@ -678,29 +678,42 @@ function GridBody({
   const pinned = new Set(grid.tiles.filter((t): t is string => t !== null));
   const unpinnedTabs = tabs.filter((t) => !pinned.has(t.id));
 
-  // Release drag state on pointerup anywhere.
+  // Drag state: a press only becomes a drag after the pointer moves more
+  // than a small threshold — selecting text across Tiles must not reorder.
+  const dragStartRef = React.useRef<{ x: number; y: number; idx: number } | null>(null);
   React.useEffect(() => {
-    if (dragFrom === null) return;
+    const move = (e: PointerEvent) => {
+      const s = dragStartRef.current;
+      if (s === null || dragFrom !== null) return;
+      if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 4) setDragFrom(s.idx);
+    };
     const up = () => {
+      dragStartRef.current = null;
       setDragFrom(null);
       setDragOver(null);
     };
+    window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
-    return () => window.removeEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
   }, [dragFrom]);
 
   const tileDragProps = (idx: number) => ({
     onPointerDown: (e: React.PointerEvent) => {
       if (e.button !== 0) return;
-      setDragFrom(idx);
+      dragStartRef.current = { x: e.clientX, y: e.clientY, idx };
     },
     onPointerEnter: () => {
       if (dragFrom !== null && dragFrom !== idx) setDragOver(idx);
     },
     onPointerUp: () => {
-      if (dragFrom !== null && dragOver !== null && dragOver !== dragFrom) {
+      const s = dragStartRef.current;
+      if (s !== null && dragFrom !== null && dragOver !== null && dragOver !== dragFrom) {
         onReorder(dragFrom, dragOver);
       }
+      dragStartRef.current = null;
       setDragFrom(null);
       setDragOver(null);
     },
@@ -1246,50 +1259,84 @@ function ServerDrawer({
 
 /* ---------------- main panel ---------------- */
 
-export function TerminalPanel(_props?: { sessionId?: string }) {
-  const [open, setOpen] = React.useState(false);
-  const [tabs, setTabs] = React.useState<TermTab[]>([]);
-  const [active, setActive] = React.useState<string | null>(null);
-  const [servers, setServers] = React.useState<ServerView[]>([]);
-  const [drawer, setDrawer] = React.useState(false);
-  const [picker, setPicker] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [loading, setLoading] = React.useState(true);
-  const heightRef = React.useRef<number>(
-    (() => {
+/* ---------------- shared hooks (Dock + Focus View) ---------------- */
+
+/**
+ * The theme chain, shared by both surfaces: per-browser Theme Override wins,
+ * then the defaultTerminalTheme Server Default, then the GUI scheme. Also
+ * exposes the Terminal Area surface variables and hot-swaps every open xterm
+ * (all surfaces) when the resolved theme changes.
+ */
+function useTerminalTheme() {
+  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
+  const [override, setOverride] = React.useState<ThemeOverride>(() => {
+    try {
+      const v = localStorage.getItem(OVERRIDE_KEY);
+      if (v === "auto" || v === "dark" || v === "light") return v;
+    } catch {
+      /* ignore */
+    }
+    return "auto";
+  });
+  const cycleOverride = () => {
+    setOverride((prev) => {
+      const next = OVERRIDE_ORDER[(OVERRIDE_ORDER.indexOf(prev) + 1) % OVERRIDE_ORDER.length];
       try {
-        const v = Number(localStorage.getItem(HEIGHT_KEY));
-        if (Number.isFinite(v) && v >= MIN_HEIGHT) return v;
+        localStorage.setItem(OVERRIDE_KEY, next);
       } catch {
         /* ignore */
       }
-      return Math.round(window.innerHeight * 0.36);
-    })(),
-  );
-  const [height, setHeight] = React.useState(heightRef.current);
-  const bodyRef = React.useRef<HTMLDivElement>(null);
-
-  /* ---- global Grid state (ADR-0005) ---- */
-  const [grid, setGrid] = React.useState<GridState>({ template: "single", tiles: [null] });
-  /** Optimistic local mutation + authoritative PUT; broadcasts from the host
-   *  (other surfaces, dead-session cleanup) overwrite via the ws below. A
-   *  failed PUT reverts to the host's state so a pin that did not stick is
-   *  visibly undone instead of silently diverging. */
-  const commitGrid = React.useCallback((next: GridState) => {
-    setGrid(next);
-    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
-      console.error("[dsh-ssh-hub] grid PUT failed, reverting:", e);
-      api("/grid")
-        .then((b) => setGrid(b.grid ?? { template: "single", tiles: [null] }))
-        .catch(() => {
-          /* host unreachable; keep local state until the next push */
-        });
+      return next;
     });
+  };
+  const defaultTheme = React.useSyncExternalStore(subscribeDefaultTheme, getDefaultTheme);
+  const resolvedTheme: "dark" | "light" =
+    override !== "auto" ? override : defaultTheme !== "auto" ? defaultTheme : guiScheme;
+
+  // Push the Server Default into the theme signal whenever the settings
+  // scope emits (hot-swaps open terminals through the effect below).
+  React.useEffect(() => {
+    const scope = getSettingsScope();
+    if (scope === null) return;
+    const push = () => pushDefaultTheme(scope.getSnapshot().value?.defaultTerminalTheme);
+    push();
+    return scope.subscribe(push);
   }, []);
 
-  // Load the global GridState and subscribe to pushes: one world, many
-  // viewfinders — every Dock and the Focus View converge on the same value.
+  // Terminal Area surface colors, applied declaratively so they are correct
+  // the moment the surface body mounts.
+  const surfaceVars = React.useMemo<React.CSSProperties>(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    const style: Record<string, string> = {};
+    for (const [k, v] of Object.entries(th.surface)) {
+      // camelCase key -> kebab-case CSS variable (custom properties are case-sensitive)
+      const name = k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+      style["--dmst-" + name] = v;
+    }
+    return style as React.CSSProperties;
+  }, [resolvedTheme]);
+
+  // Hot-swap every open xterm instance when the resolved theme changes
+  // (no reconnect, no reload).
   React.useEffect(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    for (const term of termRegistry.values()) term.options.theme = th.xterm;
+  }, [resolvedTheme]);
+
+  return { override, cycleOverride, resolvedTheme, surfaceVars };
+}
+
+/**
+ * The global Grid state: loaded once and kept in sync via /grid/events
+ * pushes, plus an optimistic commit that reverts to the host's authoritative
+ * state when the PUT fails (so a pin that did not stick visibly undoes
+ * itself). `enabled` gates the subscription (the Focus View subscribes only
+ * while visible).
+ */
+function useGridState(enabled: boolean) {
+  const [grid, setGrid] = React.useState<GridState>({ template: "single", tiles: [null] });
+  React.useEffect(() => {
+    if (!enabled) return;
     let ws: WebSocket | null = null;
     let cancelled = false;
     api("/grid")
@@ -1317,7 +1364,46 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
       cancelled = true;
       ws?.close();
     };
+  }, [enabled]);
+  const commitGrid = React.useCallback((next: GridState) => {
+    setGrid(next);
+    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
+      console.error("[dsh-ssh-hub] grid PUT failed, reverting:", e);
+      api("/grid")
+        .then((b) => setGrid(b.grid ?? { template: "single", tiles: [null] }))
+        .catch(() => {
+          /* host unreachable; keep local state until the next push */
+        });
+    });
   }, []);
+  return { grid, commitGrid };
+}
+
+export function TerminalPanel(_props?: { sessionId?: string }) {
+  const [open, setOpen] = React.useState(false);
+  const [tabs, setTabs] = React.useState<TermTab[]>([]);
+  const [active, setActive] = React.useState<string | null>(null);
+  const [servers, setServers] = React.useState<ServerView[]>([]);
+  const [drawer, setDrawer] = React.useState(false);
+  const [picker, setPicker] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const heightRef = React.useRef<number>(
+    (() => {
+      try {
+        const v = Number(localStorage.getItem(HEIGHT_KEY));
+        if (Number.isFinite(v) && v >= MIN_HEIGHT) return v;
+      } catch {
+        /* ignore */
+      }
+      return Math.round(window.innerHeight * 0.36);
+    })(),
+  );
+  const [height, setHeight] = React.useState(heightRef.current);
+  const bodyRef = React.useRef<HTMLDivElement>(null);
+
+  /* ---- global Grid state (ADR-0005) ---- */
+  const { grid, commitGrid } = useGridState(true);
 
   // Measure the Terminal Area so fitCount can decide how many Tiles fit here
   // (the Dock caps at two; the Focus View passes its own cap).
@@ -1341,63 +1427,8 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
     commitGrid(gridWithTemplate(grid, next));
   };
 
-  // Resolved Terminal Theme: the Theme Override wins over the GUI scheme.
-  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
-  const [override, setOverride] = React.useState<ThemeOverride>(() => {
-    try {
-      const v = localStorage.getItem(OVERRIDE_KEY);
-      if (v === "auto" || v === "dark" || v === "light") return v;
-    } catch {
-      /* ignore */
-    }
-    return "auto";
-  });
-  const cycleOverride = () => {
-    setOverride((prev) => {
-      const next = OVERRIDE_ORDER[(OVERRIDE_ORDER.indexOf(prev) + 1) % OVERRIDE_ORDER.length];
-      try {
-        localStorage.setItem(OVERRIDE_KEY, next);
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  };
-  // Theme chain: local override (dark/light) > defaultTerminalTheme > GUI.
-  const defaultTheme = React.useSyncExternalStore(subscribeDefaultTheme, getDefaultTheme);
-  const resolvedTheme: "dark" | "light" =
-    override !== "auto" ? override : defaultTheme !== "auto" ? defaultTheme : guiScheme;
-
-  // Push the Server Default into the theme signal whenever the settings
-  // scope emits (hot-swaps open terminals through the existing effect).
-  React.useEffect(() => {
-    const scope = getSettingsScope();
-    if (scope === null) return;
-    const push = () => pushDefaultTheme(scope.getSnapshot().value?.defaultTerminalTheme);
-    push();
-    return scope.subscribe(push);
-  }, []);
-
-  // Terminal Area surface colors, applied declaratively so they are correct
-  // the moment the panel body mounts (an effect would miss the mount when the
-  // panel starts collapsed).
-  const surfaceVars = React.useMemo<React.CSSProperties>(() => {
-    const th = TERMINAL_THEMES[resolvedTheme];
-    const style: Record<string, string> = {};
-    for (const [k, v] of Object.entries(th.surface)) {
-      // camelCase key -> kebab-case CSS variable (custom properties are case-sensitive)
-      const name = k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
-      style["--dmst-" + name] = v;
-    }
-    return style as React.CSSProperties;
-  }, [resolvedTheme]);
-
-  // Hot-swap every open xterm instance when the resolved theme changes
-  // (no reconnect, no reload).
-  React.useEffect(() => {
-    const th = TERMINAL_THEMES[resolvedTheme];
-    for (const term of termRegistry.values()) term.options.theme = th.xterm;
-  }, [resolvedTheme]);
+  // Resolved Terminal Theme + surface variables (shared hook).
+  const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
 
   const refreshServers = React.useCallback(async () => {
     try {
@@ -1612,8 +1643,6 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
               ? "连接失败"
               : "已断开";
 
-  const dotClass = (s: TabStatus) =>
-    "dmsTabDot" + (s === "connecting" ? " isConnecting" : s === "live" ? " isLive" : " isClosed");
 
   return (
     <div className="dmsRoot">
@@ -1630,11 +1659,13 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
               stateLabel={stateLabel}
               onSelect={(id) => {
                 setActive(id);
-                // Clicking an unpinned tab shows it: pin it into the first
-                // free Tile (when the Grid has room).
-                const free = grid.tiles.indexOf(null);
-                if (pinnedIndex(id) === -1 && free !== -1) {
-                  commitGrid(gridPin(grid, id, free));
+                // Clicking an unpinned tab shows it (story 6: tab strip keeps
+                // its behavior): pin into the first free Tile, or replace the
+                // last one when the Grid is full.
+                if (pinnedIndex(id) === -1) {
+                  const free = grid.tiles.indexOf(null);
+                  const target = free !== -1 ? free : grid.tiles.length - 1;
+                  commitGrid(gridPin(grid, id, target));
                 }
               }}
               onClose={closeTab}
@@ -1666,6 +1697,14 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
               onClick={cycleTemplate}
             >
               布局:{TEMPLATE_LABEL[grid.template] ?? grid.template}
+            </button>
+            <button
+              className="dmsToolBtn"
+              title="专注视图（Ctrl+Shift+`，Esc 返回）"
+              aria-label="专注视图"
+              onClick={() => setFocusVisible(true)}
+            >
+              {Icon.terminal()} 专注视图
             </button>
             <button
               className="dmsToolBtn"
@@ -1797,58 +1836,15 @@ function subscribeFocusVisible(listener: () => void) {
 export function FocusView() {
   const visible = React.useSyncExternalStore(subscribeFocusVisible, getFocusVisible);
 
-  /* ---- theme chain (same resolution as the Dock) ---- */
-  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
-  const [override, setOverride] = React.useState<ThemeOverride>(() => {
-    try {
-      const v = localStorage.getItem(OVERRIDE_KEY);
-      if (v === "auto" || v === "dark" || v === "light") return v;
-    } catch {
-      /* ignore */
-    }
-    return "auto";
-  });
-  const cycleOverride = () => {
-    setOverride((prev) => {
-      const next = OVERRIDE_ORDER[(OVERRIDE_ORDER.indexOf(prev) + 1) % OVERRIDE_ORDER.length];
-      try {
-        localStorage.setItem(OVERRIDE_KEY, next);
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  };
-  const defaultTheme = React.useSyncExternalStore(subscribeDefaultTheme, getDefaultTheme);
-  const resolvedTheme: "dark" | "light" =
-    override !== "auto" ? override : defaultTheme !== "auto" ? defaultTheme : guiScheme;
-  React.useEffect(() => {
-    const scope = getSettingsScope();
-    if (scope === null) return;
-    const push = () => pushDefaultTheme(scope.getSnapshot().value?.defaultTerminalTheme);
-    push();
-    return scope.subscribe(push);
-  }, []);
-  const surfaceVars = React.useMemo<React.CSSProperties>(() => {
-    const th = TERMINAL_THEMES[resolvedTheme];
-    const style: Record<string, string> = {};
-    for (const [k, v] of Object.entries(th.surface)) {
-      const name = k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
-      style["--dmst-" + name] = v;
-    }
-    return style as React.CSSProperties;
-  }, [resolvedTheme]);
-  React.useEffect(() => {
-    const th = TERMINAL_THEMES[resolvedTheme];
-    for (const term of termRegistry.values()) term.options.theme = th.xterm;
-  }, [resolvedTheme]);
+  /* ---- theme chain (shared hook) ---- */
+  const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
 
   /* ---- world state (projections of host truth) ---- */
   const [servers, setServers] = React.useState<ServerView[]>([]);
   const [defaults, setDefaults] = React.useState<ServerDefaults | null>(null);
   const [tabs, setTabs] = React.useState<TermTab[]>([]);
   const [active, setActive] = React.useState<string | null>(null);
-  const [grid, setGrid] = React.useState<GridState>({ template: "single", tiles: [null] });
+  const { grid, commitGrid } = useGridState(visible);
   const [drawer, setDrawer] = React.useState(false);
   const [picker, setPicker] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -1892,28 +1888,6 @@ export function FocusView() {
         if (remote.length > 0) setActive(remote[0].id);
       })
       .catch(() => {});
-    // Grid state + pushes.
-    let ws: WebSocket | null = null;
-    let cancelled = false;
-    api("/grid")
-      .then((b) => {
-        if (!cancelled) setGrid(b.grid ?? { template: "single", tiles: [null] });
-      })
-      .catch(() => {});
-    try {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(proto + "//" + location.host + PREFIX + "/grid/events");
-      ws.onmessage = (ev) => {
-        if (typeof ev.data !== "string" || cancelled) return;
-        try {
-          setGrid(JSON.parse(ev.data));
-        } catch {
-          /* ignore */
-        }
-      };
-    } catch {
-      /* ws unavailable */
-    }
     // Measure the Terminal Area for fitCount.
     const el = bodyRef.current;
     let ro: ResizeObserver | null = null;
@@ -1924,8 +1898,6 @@ export function FocusView() {
       ro.observe(el);
     }
     return () => {
-      cancelled = true;
-      ws?.close();
       ro?.disconnect();
     };
   }, [visible, refreshServers, refreshDefaults]);
@@ -1941,17 +1913,6 @@ export function FocusView() {
   }, [visible]);
 
   const visCount = gridSize.w > 0 ? fitCount(grid.template, gridSize.w, gridSize.h, 4) : 0;
-  const commitGrid = React.useCallback((next: GridState) => {
-    setGrid(next);
-    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
-      console.error("[dsh-ssh-hub] grid PUT failed, reverting:", e);
-      api("/grid")
-        .then((b) => setGrid(b.grid ?? { template: "single", tiles: [null] }))
-        .catch(() => {
-          /* host unreachable; keep local state until the next push */
-        });
-    });
-  }, []);
   const cycleTemplate = () => {
     const i = TEMPLATES.indexOf(grid.template);
     const next = TEMPLATES[(i + 1) % TEMPLATES.length];
@@ -2058,9 +2019,12 @@ export function FocusView() {
           stateLabel={stateLabel}
           onSelect={(id) => {
             setActive(id);
-            const free = grid.tiles.indexOf(null);
-            if (pinnedIndex(id) === -1 && free !== -1) {
-              commitGrid(gridPin(grid, id, free));
+            // Clicking an unpinned tab shows it (story 6): pin into the
+            // first free Tile, or replace the last one when the Grid is full.
+            if (pinnedIndex(id) === -1) {
+              const free = grid.tiles.indexOf(null);
+              const target = free !== -1 ? free : grid.tiles.length - 1;
+              commitGrid(gridPin(grid, id, target));
             }
           }}
           onClose={closeTab}

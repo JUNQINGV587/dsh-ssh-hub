@@ -39,12 +39,4 @@ export class Scrollback {
     return Buffer.concat(this.chunks);
   }
 
-  clear() {
-    this.chunks = [];
-    this.bytes = 0;
-  }
-
-  get size() {
-    return this.bytes;
-  }
 }
