@@ -198,14 +198,6 @@ export function apply(ctx: any, config: any) {
   let sessionCounter = 0;
   const makeId = () => `s${++sessionCounter}-${randomUUID()}`;
 
-  function killSession(id: string): boolean {
-    return registry.kill(id);
-  }
-
-  function forgetSession(id: string) {
-    registry.forget(id);
-  }
-
   /** Reject cross-origin requests: the DSH webserver has no auth by design,
    *  so at minimum never let another origin drive the terminal. */
   function sameOrigin(req: any) {
@@ -482,10 +474,10 @@ export function apply(ctx: any, config: any) {
               return;
             }
             // kill sessions bound to this server
-            for (const sid of [...registry.sessions.keys()]) {
+            for (const sid of registry.allIds()) {
               if (registry.get(sid)?.serverId === id) {
-                killSession(sid);
-                forgetSession(sid);
+                registry.kill(sid);
+                registry.forget(sid);
               }
             }
             json(res, 200, { ok: true });
@@ -565,11 +557,11 @@ export function apply(ctx: any, config: any) {
         const sessionMatch = rest.match(/^\/sessions\/([^/]+)$/);
         if (sessionMatch !== null && method === "DELETE") {
           const id = sessionMatch[1];
-          if (!killSession(id)) {
+          if (!registry.kill(id)) {
             json(res, 404, { error: "no such session" });
             return;
           }
-          forgetSession(id);
+          registry.forget(id);
           json(res, 200, { ok: true });
           return;
         }
@@ -593,10 +585,10 @@ export function apply(ctx: any, config: any) {
         }
       }
       gridClients.clear();
-      for (const [, dispose] of upgradeDisposers) dispose();
+      // clearAll kills and forgets every session; forget() disposes the
+      // per-session upgrade routes through the reclaim hook.
+      registry.clearAll();
       upgradeDisposers.clear();
-      for (const id of [...registry.sessions.keys()]) killSession(id);
-      registry.sessions.clear();
     };
   });
 
