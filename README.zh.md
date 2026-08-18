@@ -25,13 +25,7 @@
 
 ## 安装
 
-从 npm 安装（推荐）：
-
-```sh
-dsh plugin --profile web add dsh-ssh-hub
-```
-
-或直接从 GitHub 仓库安装：
+从 GitHub 仓库安装（推荐）：
 
 ```sh
 dsh plugin --profile web add github:JUNQINGV587/dsh-ssh-hub
@@ -40,6 +34,12 @@ dsh plugin --profile web add github:JUNQINGV587/dsh-ssh-hub
 > Git 源安装会现场构建包，而 pnpm 默认拦截构建脚本。若安装时报
 > "Ignored build scripts" 错误，把 pnpm 打印的构建 key 加到 profile 的
 > `pnpm-workspace.yaml` 的 `allowBuilds` 下，再重新执行安装。
+
+或从 npm 安装（发布后可用）：
+
+```sh
+dsh plugin --profile web add dsh-ssh-hub
+```
 
 或从本地源码安装：
 

@@ -25,13 +25,7 @@ Manage a list of SSH servers and open **multiple interactive terminals at once**
 
 ## Installation
 
-From npm (recommended):
-
-```sh
-dsh plugin --profile web add dsh-ssh-hub
-```
-
-or straight from the GitHub repository:
+From the GitHub repository (recommended):
 
 ```sh
 dsh plugin --profile web add github:JUNQINGV587/dsh-ssh-hub
@@ -41,6 +35,12 @@ dsh plugin --profile web add github:JUNQINGV587/dsh-ssh-hub
 > scripts by default. If the add fails with an "Ignored build scripts" error,
 > add the build key pnpm printed under `allowBuilds` in the profile's
 > `pnpm-workspace.yaml`, then re-run the add.
+
+or from npm, once published:
+
+```sh
+dsh plugin --profile web add dsh-ssh-hub
+```
 
 or install from a local checkout:
 
