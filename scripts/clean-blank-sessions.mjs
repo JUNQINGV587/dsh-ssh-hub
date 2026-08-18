@@ -7,20 +7,24 @@
  * 多浏览器访问会在反复全新加载后留下大量从未使用过的空会话。
  *
  * 本脚本：
- *   1. 扫描 ~/.dsh/sessions 下各工作区目录（--data-* 前缀）的会话日志（仅 session-* 前缀，跳过 subagent）
- *   2. 解压 session.jsonl.zstd 判断是否空会话（无任何 user/message 与 assistant/message）
+ *   1. 扫描 ~/.dsh/sessions 下各工作区目录（--data-* 前缀）的会话日志（仅 session-* 与 solo-e2e-* 前缀，跳过 subagent）
+ *   2. 解压 session.jsonl.zstd 判断：
+ *      - session-* 前缀：空会话（无任何 user/message 与 assistant/message）才清理
+ *      - solo-e2e-* 前缀：dsh-plugin-solo-thinking 的 E2E 测试会话（scripts/e2e-run.mjs 创建、无清理逻辑），
+ *        无论有无消息一律视为测试垃圾清理（这是 CI 产物，不是真实对话）
  *   3. 通过 dsh-session-manager 的 /dsh-session-manager/delete 路由删除（归档 + 进回收站记录），
  *      与原文件目录一并移入 ~/.dsh/dsh-delete-session-trash/，与 GUI 手动删除行为一致
  *
  * 用法：
  *   node scripts/clean-blank-sessions.mjs                 # 实际清理（默认 min-age 10 分钟）
  *   node scripts/clean-blank-sessions.mjs --dry-run       # 只列出，不删除
- *   node scripts/clean-blank-sessions.mjs --min-age 1     # 允许清理 1 分钟前的空会话
+ *   node scripts/clean-blank-sessions.mjs --min-age 1     # 允许清理 1 分钟前的空会话/测试会话
  *   node scripts/clean-blank-sessions.mjs --base http://127.0.0.1:3080
  *
  * 安全保护：
- *   - 只删「0 条消息」的会话；subagent（派生会话）一律跳过
- *   - min-age 内的空会话跳过（防止误删正在被页面/测试使用的空白会话）
+ *   - 普通会话只删「0 条消息」的；solo-e2e-* 测试会话无论消息数都清（仅限该前缀）
+ *   - subagent（派生会话）一律跳过
+ *   - min-age 内的会话跳过（防止误删正在被页面/测试使用的会话）
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
@@ -33,6 +37,8 @@ const SESSIONS_ROOT = join(HOME, ".dsh", "sessions");
 const TRASH_ROOT = join(HOME, ".dsh", "dsh-delete-session-trash");
 const DEFAULT_MIN_AGE_MINUTES = 10;
 const SESSION_ID_RE = /^session-[0-9a-fA-F-]{8,}$/;
+// solo-thinking 的 E2E 测试会话（scripts/e2e-run.mjs 创建）：solo-e2e-<uuid> / solo-e2e-suggest-<uuid> / solo-e2e-grouped-<uuid>
+const E2E_SESSION_RE = /^solo-e2e(?:-(?:suggest|grouped))?-[0-9a-fA-F-]{8,}$/;
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes("--dry-run");
@@ -110,7 +116,8 @@ const workspaces = readdirSync(SESSIONS_ROOT, { withFileTypes: true })
 const candidates = [];
 for (const ws of workspaces) {
   for (const entry of readdirSync(ws, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !SESSION_ID_RE.test(entry.name)) continue;
+    if (!entry.isDirectory()) continue;
+    if (!SESSION_ID_RE.test(entry.name) && !E2E_SESSION_RE.test(entry.name)) continue;
     candidates.push({ id: entry.name, dir: join(ws, entry.name) });
   }
 }
@@ -120,19 +127,27 @@ for (const { id, dir } of candidates) {
   const info = inspectSession(dir);
   if (!info) continue;
   if (info.origin === "subagent" || info.parentSession) continue; // 派生会话不碰
-  if (info.nUser > 0 || info.nAssist > 0) continue; // 有内容的不碰
+  const isE2e = E2E_SESSION_RE.test(id);
+  if (!isE2e && (info.nUser > 0 || info.nAssist > 0)) continue; // 普通会话有内容的不碰；测试会话无论有无内容都清
   const ageMs = info.createdAt ? now - info.createdAt : Infinity;
-  if (ageMs < minAgeMs) continue; // 太新，可能是正在使用的空白
-  found.push({ id, dir, created: info.createdAt ? new Date(info.createdAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "?" });
+  if (ageMs < minAgeMs) continue; // 太新，可能是正在使用的会话
+  found.push({ id, dir, kind: isE2e ? "测试会话" : "空会话", created: info.createdAt ? new Date(info.createdAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "?" });
 }
 
 if (found.length === 0) {
-  console.log(`[clean-blank-sessions] 没有需要清理的空会话 (min-age=${minAgeMs / 60000}min)`);
+  console.log(`[clean-blank-sessions] 没有需要清理的会话 (min-age=${minAgeMs / 60000}min)`);
   process.exit(0);
 }
 
-console.log(`[clean-blank-sessions] 发现 ${found.length} 个空会话（${dryRun ? "DRY-RUN，不删除" : "开始清理"}）：`);
-for (const f of found) console.log(`  - ${f.id}  (创建于 ${f.created})`);
+const nBlank = found.filter((f) => f.kind === "空会话").length;
+const nE2e = found.length - nBlank;
+const summary = nBlank > 0 && nE2e > 0
+  ? `发现 ${found.length} 个待清理会话（${nBlank} 个空会话 + ${nE2e} 个 solo-e2e 测试会话）`
+  : nE2e > 0
+    ? `发现 ${nE2e} 个 solo-e2e 测试会话`
+    : `发现 ${nBlank} 个空会话`;
+console.log(`[clean-blank-sessions] ${summary}（${dryRun ? "DRY-RUN，不删除" : "开始清理"}）：`);
+for (const f of found) console.log(`  - ${f.id}  [${f.kind}] (创建于 ${f.created})`);
 
 if (dryRun) {
   console.log("[clean-blank-sessions] --dry-run 结束，未做任何删除");
