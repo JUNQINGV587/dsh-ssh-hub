@@ -17,7 +17,7 @@ Manage a list of SSH servers and open **multiple interactive terminals at once**
 
 ## Requirements
 
-- DeepSeek Harness (DSH) Web GUI running locally (tested on `dsh` ≥ some 2026 build)
+- DeepSeek Harness (DSH) Web GUI (tested on `dsh` ≥ some 2026 build). The panel is **bind-address agnostic**: it works identically whether DSH listens on the default loopback `127.0.0.1:3080` or on `0.0.0.0` for LAN / reverse-proxy access — all requests are derived from the page origin, so no configuration is needed either way. See the security note below before exposing DSH on a non-loopback address.
 - Node.js ≥ 20 (the DSH runtime provides this)
 - The machines you connect to must accept SSH logins from the machine DSH runs on
 
@@ -66,6 +66,7 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 - WebSocket terminals are same-origin gated: cross-origin pages cannot connect to a session.
 - Connection attempts honor your server's host-key policy via `strictHostKey` (default off); turn it on for stricter verification.
 - This is a **trusted-host plugin**: it runs arbitrary shell commands on the servers you configure, on behalf of whoever can reach the DSH web UI. Deploy DSH with proper access control.
+- **Binding DSH to `0.0.0.0` (or any non-loopback address) exposes this panel to your network.** The DSH webserver has no authentication by design, and the same-origin gate deliberately allows requests without an `Origin` header (non-browser clients) — so anyone who can reach the port (e.g. via a LAN IP) can list your configured servers (host/port/username) and open SSH terminals. If you need remote access, put DSH behind an authenticating reverse proxy or restrict the port at the firewall; do not rely on the same-origin gate as an access control.
 
 ## Development
 
