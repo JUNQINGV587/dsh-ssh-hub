@@ -8,17 +8,27 @@
  *   - tab bar: one tab per open SSH shell, Ctrl+` toggles the panel
  *   - each tab owns an independent xterm instance + WebSocket
  *
- * Visual language follows DSH design tokens; the terminal surface is always
- * dark (Campbell palette) so ANSI colors stay readable in both themes.
+ * Visual language follows DSH design tokens; the Terminal Area follows the
+ * Terminal Theme (shared palette module, light/dark variants) so ANSI colors
+ * stay readable in both themes. See docs/adr/0002-adaptive-terminal-theme.md.
  */
 import React from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { TERMINAL_THEMES } from "../shared/terminal-themes.mjs";
 
 const PREFIX = "/ssh-hub";
 const HEIGHT_KEY = "dsh-ssh-hub.height";
 const MIN_HEIGHT = 120;
+const OVERRIDE_KEY = "dsh-ssh-hub.termTheme";
+const OVERRIDE_ORDER = ["auto", "dark", "light"] as const;
+type ThemeOverride = (typeof OVERRIDE_ORDER)[number];
+const OVERRIDE_LABEL: Record<ThemeOverride, string> = {
+  auto: "跟随界面",
+  dark: "深色",
+  light: "浅色",
+};
 
 /* xterm stylesheet served by the host plugin */
 const XTERM_CSS_TAG = "dsh-ssh-hub-xterm-css";
@@ -75,13 +85,22 @@ const CSS = `
 .dmsToolBtn:disabled{cursor:default;opacity:.45}
 .dmsToolBtn.primary{background:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));border-color:transparent;color:#fff}
 .dmsToolBtn.primary:hover:not(:disabled){filter:brightness(1.1)}
-.dmsBody{flex:auto;min-height:0;position:relative;background:#1e2128;box-shadow:inset 0 1px 0 var(--dsw-alias-border-l1)}
-.dmsPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:#1e2128}
+.dmsBody{flex:auto;min-height:0;position:relative;background:var(--dmst-bg,#1e2128);box-shadow:inset 0 1px 0 var(--dsw-alias-border-l1)}
+.dmsPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:var(--dmst-bg,#1e2128)}
 .dmsPane.isActive{display:block}
-.dmsEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8b90a0;font-family:Inter,var(--dsw-font-family);font-size:12px}
-.dmsEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
-.dmsEmptyBtn:hover{background:#343946}
-.dmsErr{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;color:#e6b0b0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;text-align:center}
+.dmsEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12px}
+.dmsEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dmst-empty-btn-bg,#2a2e38);color:var(--dmst-empty-btn-fg,#e6e8ee);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dmsEmptyBtn:hover{background:var(--dmst-empty-btn-bg-hover,#343946)}
+.dmsErr{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;color:var(--dmst-err-fg,#e6b0b0);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;text-align:center}
+/* server picker (inside the Terminal Area, follows the Terminal Theme) */
+.dmsPicker{box-sizing:border-box;background:var(--dmst-picker-bg,#262a33);border:1px solid var(--dmst-picker-border,#3a3f4b)}
+.dmsPickerLabel{font-size:11px;font-weight:600;color:var(--dmst-picker-label-fg,#8b90a0);padding:2px 6px 6px}
+.dmsPickerItem{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border-radius:7px;border:none;background:transparent;color:var(--dmst-picker-item-fg,#e6e8ee);font-family:Inter,var(--dsw-font-family);font-size:12.5px;text-align:left;cursor:pointer}
+.dmsPickerItem:hover:not(:disabled){background:var(--dmst-picker-item-bg-hover,#2e333d)}
+.dmsPickerMeta{color:var(--dmst-picker-label-fg,#8b90a0)}
+.dmsPickerFoot{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 0;border-top:1px solid var(--dmst-picker-foot-border,#333947);margin-top:4px}
+.dmsPickerLink{border:none;background:transparent;color:var(--dmst-picker-label-fg,#8b90a0);font-size:11.5px;cursor:pointer;padding:4px 6px}
+.dmsPickerLink:hover{color:var(--dmst-picker-item-fg,#e6e8ee)}
 body.dmsResizing{cursor:ns-resize!important;user-select:none!important;-webkit-user-select:none!important}
 /* server drawer */
 .dmsOverlay{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.38);display:flex;justify-content:flex-end}
@@ -132,29 +151,39 @@ if (typeof document !== "undefined" && document.getElementById(STYLE_TAG) === nu
   document.head.appendChild(tag);
 }
 
-const TERM_THEME = {
-  foreground: "#d7dae0",
-  background: "#1e2128",
-  cursor: "#d7dae0",
-  cursorAccent: "#1e2128",
-  selectionBackground: "#3b4252aa",
-  black: "#0c0c0c",
-  red: "#e74856",
-  green: "#16c60c",
-  yellow: "#c19c00",
-  blue: "#3b78ff",
-  magenta: "#d64fa8",
-  cyan: "#3a96dd",
-  white: "#cccccc",
-  brightBlack: "#8a8a8a",
-  brightRed: "#ff6b6b",
-  brightGreen: "#2ee62e",
-  brightYellow: "#f9f1a5",
-  brightBlue: "#7aa2ff",
-  brightMagenta: "#f27fd8",
-  brightCyan: "#61d6d6",
-  brightWhite: "#f2f2f2",
-};
+const TERM_THEME = TERMINAL_THEMES.dark.xterm;
+
+/* ---------------- terminal theme signal bridge ---------------- */
+
+type GuiScheme = "light" | "dark";
+
+let currentGuiScheme: GuiScheme = "dark";
+const guiSchemeListeners = new Set<() => void>();
+
+/**
+ * Pushed by the host bundle wrapper (build.mjs) from the DSH theme service
+ * (`theme/change`) or the `prefers-color-scheme` fallback.
+ */
+export function setGuiScheme(s: GuiScheme) {
+  if (s !== "light" && s !== "dark") return;
+  if (s === currentGuiScheme) return;
+  currentGuiScheme = s;
+  for (const l of [...guiSchemeListeners]) l();
+}
+
+function subscribeGuiScheme(listener: () => void) {
+  guiSchemeListeners.add(listener);
+  return () => {
+    guiSchemeListeners.delete(listener);
+  };
+}
+
+function getGuiScheme(): GuiScheme {
+  return currentGuiScheme;
+}
+
+/** Open xterm instances by tab id, for hot theme swapping. */
+const termRegistry = new Map<string, Terminal>();
 
 /* ---------------- helpers ---------------- */
 
@@ -235,6 +264,23 @@ const Icon = {
       <path d="M5.5 1h3l.5 1.6c.45.16.86.38 1.24.65l1.58-.5 1.5 2.6-1.2 1.2a4.9 4.9 0 010 1.3l1.2 1.2-1.5 2.6-1.58-.5c-.38.27-.79.5-1.24.65L8.5 13h-3l-.5-1.6a4.5 4.5 0 01-1.24-.65l-1.58.5-1.5-2.6 1.2-1.2a4.9 4.9 0 010-1.3l-1.2-1.2 1.5-2.6 1.58.5c.38-.27.79-.5 1.24-.65L5.5 1zm1.5 4a2 2 0 100 4 2 2 0 000-4z" fill="currentColor" />
     </svg>
   ),
+  sun: () => (
+    <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx={7} cy={7} r={2.6} stroke="currentColor" strokeWidth={1.1} />
+      <path d="M7 1v1.6M7 11.4V13M1 7h1.6M11.4 7H13M2.6 2.6l1.1 1.1M10.3 10.3l1.1 1.1M11.4 2.6l-1.1 1.1M3.7 10.3l-1.1 1.1" stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" />
+    </svg>
+  ),
+  moon: () => (
+    <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M11.8 8.9A5.2 5.2 0 015.1 2.2a5.2 5.2 0 106.7 6.7z" stroke="currentColor" strokeWidth={1.1} strokeLinejoin="round" />
+    </svg>
+  ),
+  autoTheme: () => (
+    <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx={7} cy={7} r={5.4} stroke="currentColor" strokeWidth={1.1} />
+      <path d="M7 1.6a5.4 5.4 0 010 10.8z" fill="currentColor" />
+    </svg>
+  ),
   edit: () => (
     <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M9.4 1.3l3.3 3.3L5.2 12.1l-3.9.6.6-3.9L9.4 1.3zm1.2 1.2l-.7.7 2 2 .7-.7-2-2z" fill="currentColor" />
@@ -279,12 +325,13 @@ function XtermPane({
       scrollback: 10000,
       unicodeVersion: "11",
       drawBoldTextInBrightColors: false,
-      theme: TERM_THEME,
+      theme: TERMINAL_THEMES[getGuiScheme()].xterm,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((_e, url) => window.open(url, "_blank", "noopener,noreferrer")));
     term.open(el);
+    termRegistry.set(tab.id, term);
     requestAnimationFrame(() => {
       try {
         fit.fit();
@@ -359,6 +406,7 @@ function XtermPane({
 
     return () => {
       closedByUs.current = true;
+      termRegistry.delete(tab.id);
       el.removeEventListener("mouseup", onMouseUp);
       el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("contextmenu", onCtx);
@@ -827,6 +875,52 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
     })(),
   );
   const [height, setHeight] = React.useState(heightRef.current);
+  const bodyRef = React.useRef<HTMLDivElement>(null);
+
+  // Resolved Terminal Theme: the Theme Override wins over the GUI scheme.
+  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
+  const [override, setOverride] = React.useState<ThemeOverride>(() => {
+    try {
+      const v = localStorage.getItem(OVERRIDE_KEY);
+      if (v === "auto" || v === "dark" || v === "light") return v;
+    } catch {
+      /* ignore */
+    }
+    return "auto";
+  });
+  const cycleOverride = () => {
+    setOverride((prev) => {
+      const next = OVERRIDE_ORDER[(OVERRIDE_ORDER.indexOf(prev) + 1) % OVERRIDE_ORDER.length];
+      try {
+        localStorage.setItem(OVERRIDE_KEY, next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+  const resolvedTheme: "dark" | "light" = override === "auto" ? guiScheme : override;
+
+  // Terminal Area surface colors, applied declaratively so they are correct
+  // the moment the panel body mounts (an effect would miss the mount when the
+  // panel starts collapsed).
+  const surfaceVars = React.useMemo<React.CSSProperties>(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    const style: Record<string, string> = {};
+    for (const [k, v] of Object.entries(th.surface)) {
+      // camelCase key -> kebab-case CSS variable (custom properties are case-sensitive)
+      const name = k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+      style["--dmst-" + name] = v;
+    }
+    return style as React.CSSProperties;
+  }, [resolvedTheme]);
+
+  // Hot-swap every open xterm instance when the resolved theme changes
+  // (no reconnect, no reload).
+  React.useEffect(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    for (const term of termRegistry.values()) term.options.theme = th.xterm;
+  }, [resolvedTheme]);
 
   const refreshServers = React.useCallback(async () => {
     try {
@@ -1016,12 +1110,22 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
             <button className="dmsToolBtn" onClick={() => setDrawer(true)}>
               {Icon.gear()} 管理服务器（{servers.length}）
             </button>
+            <button
+              className="dmsToolBtn"
+              style={{ marginLeft: "auto" }}
+              title={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
+              aria-label={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
+              onClick={cycleOverride}
+            >
+              {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
+              {OVERRIDE_LABEL[override]}
+            </button>
             <span className="dmsHint" style={{ marginLeft: 4 }}>
               {servers.length === 0 ? "先添加一台服务器，才能连接" : "双击服务器行或点「新会话」开始"}{" "}
               {tabs.length > 0 ? "· 关闭最后一个终端标签会自动断开" : ""}
             </span>
           </div>
-          <div className="dmsBody">
+          <div className="dmsBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
             {tabs.map((t) => (
               <XtermPane
                 key={t.id}
@@ -1114,64 +1218,41 @@ function ServerPicker({
 }) {
   return (
     <div
+      className="dmsPicker"
       style={{
         position: "absolute",
         bottom: 8,
         left: 10,
         minWidth: 260,
         maxWidth: 340,
-        background: "#262a33",
-        border: "1px solid #3a3f4b",
         borderRadius: 10,
         padding: 8,
         boxShadow: "0 8px 28px rgba(0,0,0,.5)",
         zIndex: 5,
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 600, color: "#8b90a0", padding: "2px 6px 6px" }}>
-        选择服务器
-      </div>
+      <div className="dmsPickerLabel">选择服务器</div>
       {servers.map((s) => (
         <button
           key={s.id}
+          className="dmsPickerItem"
           disabled={busy}
           onClick={() => onPick(s)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            padding: "7px 8px",
-            borderRadius: 7,
-            border: "none",
-            background: "transparent",
-            color: "#e6e8ee",
-            fontFamily: "Inter,var(--dsw-font-family)",
-            fontSize: 12.5,
-            textAlign: "left",
-            cursor: "pointer",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "#2e333d")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
         >
-          <span style={{ color: "#8b90a0" }}>{Icon.terminal(13)}</span>
+          <span className="dmsPickerMeta">{Icon.terminal(13)}</span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {s.name}
-            <span style={{ color: "#8b90a0", marginLeft: 6, fontSize: 11 }}>{s.username}@{s.host}</span>
+            <span className="dmsPickerMeta" style={{ marginLeft: 6, fontSize: 11 }}>
+              {s.username}@{s.host}
+            </span>
           </span>
         </button>
       ))}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 6px 0", borderTop: "1px solid #333947", marginTop: 4 }}>
-        <button
-          onClick={onManage}
-          style={{ border: "none", background: "transparent", color: "#8b90a0", fontSize: 11.5, cursor: "pointer", padding: "4px 6px" }}
-        >
+      <div className="dmsPickerFoot">
+        <button className="dmsPickerLink" onClick={onManage}>
           + 添加服务器…
         </button>
-        <button
-          onClick={onClose}
-          style={{ border: "none", background: "transparent", color: "#8b90a0", fontSize: 11.5, cursor: "pointer", padding: "4px 6px" }}
-        >
+        <button className="dmsPickerLink" onClick={onClose}>
           关闭
         </button>
       </div>

@@ -12,6 +12,7 @@ Manage a list of SSH servers and open **multiple interactive terminals at once**
 - 🔑 **Four auth methods** per server: password, private key (with passphrase), SSH agent, or no-auth (local host keys)
 - 🖱️ **Drag to resize** the panel height; height and open/closed state persist across reloads
 - 🚀 **Connection testing** before saving a server (latency + auth check)
+- 🎨 **Theme-aware terminals**: the terminal follows the DSH GUI light/dark theme (falling back to the OS `prefers-color-scheme` when the theme service is absent), with a toolbar cycle button to pin **跟随界面 / 深色 / 浅色** (auto / dark / light) per browser. Open terminals hot-swap in place. Both palettes are held to WCAG contrast floors (foreground/background ≥ 7:1, ANSI colors ≥ 4.5:1) enforced in `npm test`
 - 🔒 **Secrets handled safely**: passwords and private keys are stored at rest only in the DSH home data dir (`0600`), are never returned by the API, and can be kept unchanged on edit
 - 🧪 Full backend integration test suite against a real SSH daemon
 
@@ -56,7 +57,8 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 
 3. Click **新会话** (New session) → pick a server → an SSH terminal opens in a new tab.
 4. Type, select-to-copy, right-click-to-paste. Drag the top edge of the panel to resize it.
-5. Moving to a new machine? Use **导出配置** (Export) / **导入配置** (Import) in the manage-servers dialog. The exported JSON contains **no secrets** — re-enter passwords/keys after importing. Import always adds entries as new servers and never overwrites existing ones.
+5. The terminal follows the GUI appearance. Want a different look for the terminal only? Click the **跟随界面 / 深色 / 浅色** button in the panel toolbar to cycle the theme; your choice is remembered per browser and applies to every open terminal instantly.
+6. Moving to a new machine? Use **导出配置** (Export) / **导入配置** (Import) in the manage-servers dialog. The exported JSON contains **no secrets** — re-enter passwords/keys after importing. Import always adds entries as new servers and never overwrites existing ones.
 
 ## Security notes
 
@@ -85,6 +87,8 @@ npm test           # integration tests against a local test sshd (see tests/)
 ### Integration tests
 
 `tests/integration.mjs` spins up a mock of the DSH server (HTTP + WS), applies the plugin, and drives a **real** SSH session against a test `sshd` (default `127.0.0.1:2222`, key auth). Override with `SSH_TEST_HOST`, `SSH_TEST_PORT`, `SSH_TEST_KEY`. See `scripts/setup-test-sshd.sh` for the CI-ready test daemon setup.
+
+`npm test` runs `scripts/check-contrast.mjs` first: both Terminal Theme variants (dark/light) are validated against the WCAG contrast floors (see `docs/adr/0002-adaptive-terminal-theme.md`).
 
 ## License
 
