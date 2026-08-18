@@ -178,6 +178,19 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsBtn.danger:hover{background:rgba(231,72,86,.14);border-color:rgba(231,72,86,.5);color:#ff8b93}
 .dmsSpacer{flex:1}
 .dmsEmptyState{display:flex;flex-direction:column;align-items:center;gap:8px;padding:28px 12px;color:var(--dsw-alias-label-tertiary);text-align:center;font-size:12.5px}
+/* Focus View: frame-wide surface (shell.overlay), z below the server drawer */
+.dmsFocusRoot{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--dsw-specific-tip);font-family:Inter,var(--dsw-font-family)}
+.dmsFocusHead{flex:none;box-sizing:border-box;height:44px;display:flex;align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip)}
+.dmsFocusTitle{flex:none;display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dmsFocusHead .dmsTabs{flex:1;min-width:0;border-bottom:none;padding:0}
+.dmsFocusExit{flex:none;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dmsFocusExit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* Sidebar foot entry (sidebar.footer.action seat) */
+.dmsSidebarEntry{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 12px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;font-weight:500;cursor:pointer;text-align:left}
+.dmsSidebarEntry:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsSidebarEntry:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
+.dmsSidebarEntry.isRail{justify-content:center;padding:0}
+.dmsSidebarEntryIcon{flex:none;display:grid;place-items:center}
 `.trim();
 if (typeof document !== "undefined" && document.getElementById(STYLE_TAG) === null) {
   const tag = document.createElement("style");
@@ -520,6 +533,92 @@ function XtermPane({
   }, [active]);
 
   return <div className={"dmsPane" + (active ? " isActive" : "")} ref={hostRef} />;
+}
+
+/* ---------------- tab strip (shared by Dock and Focus View) ---------------- */
+
+function TabStrip({
+  tabs,
+  active,
+  grid,
+  serversCount,
+  busy,
+  stateLabel,
+  onSelect,
+  onClose,
+  onPinToggle,
+  onNew,
+}: {
+  tabs: TermTab[];
+  active: string | null;
+  grid: GridState;
+  serversCount: number;
+  busy: boolean;
+  stateLabel: string;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => void;
+  onPinToggle: (id: string) => void;
+  onNew: () => void;
+}) {
+  const pinnedIndex = (id: string) => grid.tiles.indexOf(id);
+  const dotClass = (s: TabStatus) =>
+    "dmsTabDot" + (s === "connecting" ? " isConnecting" : s === "live" ? " isLive" : " isClosed");
+  return (
+    <div className="dmsTabs">
+      <span className="dmsTabsLead" aria-hidden>
+        {Icon.terminal()}
+      </span>
+      <div className="dmsTabsScroll" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={t.id === active}
+            className={"dmsTab" + (t.id === active ? " isActive" : "") + (t.status === "closed" || t.status === "error" ? " isClosed" : "")}
+            onClick={() => onSelect(t.id)}
+          >
+            <span className={dotClass(t.status)} />
+            <span className="dmsTabLabel">{t.label}</span>
+            <span
+              className={"dmsTabPin" + (pinnedIndex(t.id) >= 0 ? " isPinned" : "")}
+              role="button"
+              title={pinnedIndex(t.id) >= 0 ? "从网格移回标签栏" : "钉入网格（同屏显示）"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPinToggle(t.id);
+              }}
+            >
+              {PinIcon()}
+            </span>
+            <span
+              className="dmsTabClose"
+              role="button"
+              title={"关闭 " + t.label}
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose(t.id);
+              }}
+            >
+              {Icon.close()}
+            </span>
+          </button>
+        ))}
+      </div>
+      <button
+        className="dmsTab dmsTabNew"
+        style={{ border: "none", padding: "0 8px", maxWidth: "none" }}
+        title="连接服务器"
+        aria-label="连接服务器"
+        disabled={busy || serversCount === 0}
+        onClick={onNew}
+      >
+        {Icon.plus()}
+      </button>
+      <span className="dmsTabsState" title={stateLabel}>
+        {stateLabel}
+      </span>
+    </div>
+  );
 }
 
 /* ---------------- grid body ---------------- */
@@ -1493,68 +1592,30 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
         <div className="dmsPanel" id="dmsPanel" style={{ height: height + "px" }}>
           <div className="dmsResize" title="拖拽调整高度" onPointerDown={startDrag} />
           <div className="dmsTabs">
-            <span className="dmsTabsLead" aria-hidden>
-              {Icon.terminal()}
-            </span>
-            <div className="dmsTabsScroll" role="tablist">
-              {tabs.map((t) => (
-                <button
-                  key={t.id}
-                  role="tab"
-                  aria-selected={t.id === active}
-                  className={"dmsTab" + (t.id === active ? " isActive" : "") + (t.status === "closed" || t.status === "error" ? " isClosed" : "")}
-                  onClick={() => {
-                    setActive(t.id);
-                    // Clicking an unpinned tab shows it: pin it into the first
-                    // free Tile (when the Grid has room).
-                    const free = grid.tiles.indexOf(null);
-                    if (pinnedIndex(t.id) === -1 && free !== -1) {
-                      commitGrid(gridPin(grid, t.id, free));
-                    }
-                  }}
-                >
-                  <span className={dotClass(t.status)} />
-                  <span className="dmsTabLabel">{t.label}</span>
-                  <span
-                    className={"dmsTabPin" + (pinnedIndex(t.id) >= 0 ? " isPinned" : "")}
-                    role="button"
-                    title={pinnedIndex(t.id) >= 0 ? "从网格移回标签栏" : "钉入网格（同屏显示）"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const idx = pinnedIndex(t.id);
-                      if (idx >= 0) unpinTile(idx);
-                      else pinTab(t.id);
-                    }}
-                  >
-                    {PinIcon()}
-                  </span>
-                  <span
-                    className="dmsTabClose"
-                    role="button"
-                    title={"关闭 " + t.label}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(t.id);
-                    }}
-                  >
-                    {Icon.close()}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <button
-              className="dmsTab dmsTabNew"
-              style={{ border: "none", padding: "0 8px", maxWidth: "none" }}
-              title="连接服务器"
-              aria-label="连接服务器"
-              disabled={busy || servers.length === 0}
-              onClick={() => setPicker((v) => !v)}
-            >
-              {Icon.plus()}
-            </button>
-            <span className="dmsTabsState" title={stateLabel}>
-              {stateLabel}
-            </span>
+            <TabStrip
+              tabs={tabs}
+              active={active}
+              grid={grid}
+              serversCount={servers.length}
+              busy={busy}
+              stateLabel={stateLabel}
+              onSelect={(id) => {
+                setActive(id);
+                // Clicking an unpinned tab shows it: pin it into the first
+                // free Tile (when the Grid has room).
+                const free = grid.tiles.indexOf(null);
+                if (pinnedIndex(id) === -1 && free !== -1) {
+                  commitGrid(gridPin(grid, id, free));
+                }
+              }}
+              onClose={closeTab}
+              onPinToggle={(id) => {
+                const idx = pinnedIndex(id);
+                if (idx >= 0) unpinTile(idx);
+                else pinTab(id);
+              }}
+              onNew={() => setPicker((v) => !v)}
+            />
             <button className="dmsBarAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
               {Icon.gear()}
             </button>
@@ -1673,6 +1734,382 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
         />
       )}
     </div>
+  );
+}
+
+/* ---------------- focus view (frame-wide, root scope) ---------------- */
+
+/** Frame-wide visibility signal for the Focus View (ADR-0005). */
+let focusVisible = false;
+const focusListeners = new Set<() => void>();
+export function setFocusVisible(v: boolean) {
+  const next = Boolean(v);
+  if (next === focusVisible) return;
+  focusVisible = next;
+  for (const l of [...focusListeners]) l();
+}
+export function getFocusVisible() {
+  return focusVisible;
+}
+function subscribeFocusVisible(listener: () => void) {
+  focusListeners.add(listener);
+  return () => {
+    focusListeners.delete(listener);
+  };
+}
+
+/**
+ * The Focus View: a single frame-wide surface covering the whole GUI for
+ * focused terminal work, isolated from the conversation (ADR-0005). Hosts the
+ * full Grid (cap 4, all five templates) plus a toolbar with parity to the
+ * Dock. Renders nothing while inactive; sessions and Grid state are global,
+ * so entering/exiting never interrupts anything.
+ */
+export function FocusView() {
+  const visible = React.useSyncExternalStore(subscribeFocusVisible, getFocusVisible);
+
+  /* ---- theme chain (same resolution as the Dock) ---- */
+  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
+  const [override, setOverride] = React.useState<ThemeOverride>(() => {
+    try {
+      const v = localStorage.getItem(OVERRIDE_KEY);
+      if (v === "auto" || v === "dark" || v === "light") return v;
+    } catch {
+      /* ignore */
+    }
+    return "auto";
+  });
+  const cycleOverride = () => {
+    setOverride((prev) => {
+      const next = OVERRIDE_ORDER[(OVERRIDE_ORDER.indexOf(prev) + 1) % OVERRIDE_ORDER.length];
+      try {
+        localStorage.setItem(OVERRIDE_KEY, next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+  const defaultTheme = React.useSyncExternalStore(subscribeDefaultTheme, getDefaultTheme);
+  const resolvedTheme: "dark" | "light" =
+    override !== "auto" ? override : defaultTheme !== "auto" ? defaultTheme : guiScheme;
+  React.useEffect(() => {
+    const scope = getSettingsScope();
+    if (scope === null) return;
+    const push = () => pushDefaultTheme(scope.getSnapshot().value?.defaultTerminalTheme);
+    push();
+    return scope.subscribe(push);
+  }, []);
+  const surfaceVars = React.useMemo<React.CSSProperties>(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    const style: Record<string, string> = {};
+    for (const [k, v] of Object.entries(th.surface)) {
+      const name = k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+      style["--dmst-" + name] = v;
+    }
+    return style as React.CSSProperties;
+  }, [resolvedTheme]);
+  React.useEffect(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    for (const term of termRegistry.values()) term.options.theme = th.xterm;
+  }, [resolvedTheme]);
+
+  /* ---- world state (projections of host truth) ---- */
+  const [servers, setServers] = React.useState<ServerView[]>([]);
+  const [defaults, setDefaults] = React.useState<ServerDefaults | null>(null);
+  const [tabs, setTabs] = React.useState<TermTab[]>([]);
+  const [active, setActive] = React.useState<string | null>(null);
+  const [grid, setGrid] = React.useState<GridState>({ template: "single", tiles: [null] });
+  const [drawer, setDrawer] = React.useState(false);
+  const [picker, setPicker] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [gridSize, setGridSize] = React.useState({ w: 0, h: 0 });
+  const bodyRef = React.useRef<HTMLDivElement>(null);
+
+  const refreshServers = React.useCallback(async () => {
+    try {
+      const body = await api("/servers");
+      setServers(body.servers ?? []);
+    } catch (e) {
+      console.error("[dsh-ssh-hub] load servers failed:", e);
+    }
+  }, []);
+  const refreshDefaults = React.useCallback(async () => {
+    try {
+      const body = await api("/defaults");
+      setDefaults(body as ServerDefaults);
+    } catch {
+      /* older host */
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!visible) return;
+    refreshServers();
+    refreshDefaults();
+    // Rebuild tabs from the host (host-owned sessions, ADR-0004).
+    api("/sessions")
+      .then((b) => {
+        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
+          b.sessions ?? [];
+        setTabs(
+          remote.map((s) => ({
+            id: s.id,
+            serverId: s.serverId,
+            label: s.serverName || s.label,
+            status: s.exited ? "closed" : "connecting",
+          })),
+        );
+        if (remote.length > 0) setActive(remote[0].id);
+      })
+      .catch(() => {});
+    // Grid state + pushes.
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    api("/grid")
+      .then((b) => {
+        if (!cancelled) setGrid(b.grid ?? { template: "single", tiles: [null] });
+      })
+      .catch(() => {});
+    try {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(proto + "//" + location.host + PREFIX + "/grid/events");
+      ws.onmessage = (ev) => {
+        if (typeof ev.data !== "string" || cancelled) return;
+        try {
+          setGrid(JSON.parse(ev.data));
+        } catch {
+          /* ignore */
+        }
+      };
+    } catch {
+      /* ws unavailable */
+    }
+    // Measure the Terminal Area for fitCount.
+    const el = bodyRef.current;
+    let ro: ResizeObserver | null = null;
+    if (el !== null) {
+      const measure = () => setGridSize({ w: el.clientWidth, h: el.clientHeight });
+      measure();
+      ro = new ResizeObserver(measure);
+      ro.observe(el);
+    }
+    return () => {
+      cancelled = true;
+      ws?.close();
+      ro?.disconnect();
+    };
+  }, [visible, refreshServers, refreshDefaults]);
+
+  // Esc exits back to the Dock.
+  React.useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocusVisible(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visible]);
+
+  const visCount = gridSize.w > 0 ? fitCount(grid.template, gridSize.w, gridSize.h, 4) : 0;
+  const commitGrid = React.useCallback((next: GridState) => {
+    setGrid(next);
+    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) =>
+      console.error("[dsh-ssh-hub] grid PUT failed:", e),
+    );
+  }, []);
+  const cycleTemplate = () => {
+    const i = TEMPLATES.indexOf(grid.template);
+    const next = TEMPLATES[(i + 1) % TEMPLATES.length];
+    commitGrid(gridWithTemplate(grid, next));
+  };
+
+  const connectTo = async (s: ServerView) => {
+    setBusy(true);
+    setPicker(false);
+    try {
+      const body = await api("/sessions", {
+        method: "POST",
+        body: JSON.stringify({ serverId: s.id, cols: 80, rows: 24 }),
+      });
+      const tab: TermTab = {
+        id: body.id,
+        serverId: s.id,
+        label: s.name || `${s.username}@${s.host}`,
+        status: "connecting",
+      };
+      setTabs((prev) => [...prev, tab]);
+      setActive(body.id);
+    } catch (e) {
+      window.alert("连接失败：" + String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const closeTab = async (id: string) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      const next = prev.filter((t) => t.id !== id);
+      if (idx !== -1) {
+        setActive((a) => (a === id ? (next[Math.min(idx, next.length - 1)]?.id ?? null) : a));
+      }
+      return next;
+    });
+    api("/sessions/" + id, { method: "DELETE" }).catch(() => {});
+  };
+  const pinnedIndex = (id: string) => grid.tiles.indexOf(id);
+  const pinTab = (id: string) => {
+    const free = grid.tiles.indexOf(null);
+    if (free === -1) return;
+    commitGrid(gridPin(grid, id, free));
+    setActive(id);
+  };
+  const unpinTile = (idx: number) => commitGrid(gridUnpin(grid, idx));
+  const reorderTiles = (from: number, to: number) => commitGrid(gridReorder(grid, from, to));
+  const pickEmpty = (idx: number, sessionId: string) => {
+    commitGrid(gridPin(grid, sessionId, idx));
+    setActive(sessionId);
+  };
+
+  const activeTab = tabs.find((t) => t.id === active) ?? null;
+  const stateLabel =
+    tabs.length === 0
+      ? servers.length === 0
+        ? "未配置服务器"
+        : "就绪"
+      : activeTab === null
+        ? "空闲"
+        : activeTab.status === "connecting"
+          ? "连接中…"
+          : activeTab.status === "live"
+            ? activeTab.label
+            : activeTab.status === "error"
+              ? "连接失败"
+              : "已断开";
+
+  if (!visible) return null;
+
+  return (
+    <div className="dmsFocusRoot" role="dialog" aria-label="终端专注视图">
+      <div className="dmsFocusHead">
+        <span className="dmsFocusTitle">{Icon.terminal()} 终端专注视图</span>
+        <TabStrip
+          tabs={tabs}
+          active={active}
+          grid={grid}
+          serversCount={servers.length}
+          busy={busy}
+          stateLabel={stateLabel}
+          onSelect={(id) => {
+            setActive(id);
+            const free = grid.tiles.indexOf(null);
+            if (pinnedIndex(id) === -1 && free !== -1) {
+              commitGrid(gridPin(grid, id, free));
+            }
+          }}
+          onClose={closeTab}
+          onPinToggle={(id) => {
+            const idx = pinnedIndex(id);
+            if (idx >= 0) unpinTile(idx);
+            else pinTab(id);
+          }}
+          onNew={() => setPicker((v) => !v)}
+        />
+        <button className="dmsFocusExit" onClick={() => setFocusVisible(false)} title="退出（Esc）">
+          {Icon.close()} 退出（Esc）
+        </button>
+      </div>
+      <div className="dmsTool">
+        <button className="dmsToolBtn" disabled={servers.length === 0 || busy} onClick={() => setPicker((v) => !v)}>
+          {Icon.plus()} 新会话
+        </button>
+        <button className="dmsToolBtn" onClick={() => setDrawer(true)}>
+          {Icon.gear()} 管理服务器（{servers.length}）
+        </button>
+        <button className="dmsToolBtn" title="布局模板（点击切换）" aria-label="布局模板（点击切换）" onClick={cycleTemplate}>
+          布局:{TEMPLATE_LABEL[grid.template] ?? grid.template}
+        </button>
+        <button
+          className="dmsToolBtn"
+          style={{ marginLeft: "auto" }}
+          title={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
+          aria-label={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
+          onClick={cycleOverride}
+        >
+          {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
+          {OVERRIDE_LABEL[override]}
+        </button>
+      </div>
+      <div className="dmsBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
+        {tabs.length === 0 ? (
+          <div className="dmsEmpty">
+            <span>{servers.length === 0 ? "还没有服务器，先添加一台" : "选择一台服务器开始连接"}</span>
+            {servers.length > 0 ? (
+              <button className="dmsEmptyBtn" onClick={() => setPicker(true)}>
+                {Icon.plus()} 连接服务器
+              </button>
+            ) : (
+              <button className="dmsEmptyBtn" onClick={() => setDrawer(true)}>
+                {Icon.plus()} 添加服务器
+              </button>
+            )}
+          </div>
+        ) : visCount === 0 ? (
+          <div className="dmsDegrade">窗口太小，终端已收回到标签栏。</div>
+        ) : (
+          <GridBody
+            grid={grid}
+            tabs={tabs}
+            visCount={visCount}
+            surface="focus"
+            onStatus={(tabId, patch) =>
+              setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))
+            }
+            onUnpin={unpinTile}
+            onReorder={reorderTiles}
+            onPickEmpty={pickEmpty}
+          />
+        )}
+        {picker && (
+          <ServerPicker servers={servers} busy={busy} onPick={connectTo} onManage={() => setDrawer(true)} onClose={() => setPicker(false)} />
+        )}
+      </div>
+      {drawer && (
+        <ServerDrawer
+          servers={servers}
+          defaults={defaults}
+          onClose={() => setDrawer(false)}
+          onChanged={refreshServers}
+          onConnect={(s) => {
+            setDrawer(false);
+            connectTo(s);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------------- sidebar entry (sidebar.footer.action) ---------------- */
+
+/**
+ * One button at the sidebar foot that opens the Focus View (ADR-0005). The
+ * sidebar's browsing and settings seats are single and occupied, so this is
+ * the only incremental seat — nothing shipped is replaced.
+ */
+export function SidebarEntry({ wide }: { wide?: boolean }) {
+  return (
+    <button
+      className={"dmsSidebarEntry" + (wide === false ? " isRail" : "")}
+      title="SSH 终端（专注视图）"
+      aria-label="SSH 终端（专注视图）"
+      onClick={() => setFocusVisible(true)}
+    >
+      <span className="dmsSidebarEntryIcon" aria-hidden>
+        {Icon.terminal(15)}
+      </span>
+      {wide !== false && <span className="dmsSidebarEntryLabel">SSH 终端</span>}
+    </button>
   );
 }
 
