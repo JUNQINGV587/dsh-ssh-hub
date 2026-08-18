@@ -92,6 +92,10 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 npm install
 npm run build      # bundles lib/index.js (host) + lib/client.js (client) + lib/client.css
 npm test           # integration tests against a local test sshd (see tests/)
+
+# after bumping + committing a version, keep package.json / tag / release in sync:
+npm version minor --no-git-tag-version && git commit -am "chore: bump version"
+scripts/release.sh # tags HEAD, pushes, and creates the GitHub release
 ```
 
 ### How it works
