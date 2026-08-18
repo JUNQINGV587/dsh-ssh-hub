@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "build": "node build.mjs",
-    "test": "node scripts/check-contrast.mjs && node tests/integration.mjs",
+    "test": "node scripts/check-contrast.mjs && node scripts/check-grid.mjs && node tests/integration.mjs",
     "prepublishOnly": "npm run build",
     "clean:blank": "node scripts/clean-blank-sessions.mjs",
     "clean:blank:dry": "node scripts/clean-blank-sessions.mjs --dry-run"

@@ -17,6 +17,16 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "../shared/terminal-themes.mjs";
+import {
+  pin as gridPin,
+  unpin as gridUnpin,
+  reorder as gridReorder,
+  withTemplate as gridWithTemplate,
+  fitCount,
+  gridAreas,
+  tileLetter,
+  TEMPLATES,
+} from "../shared/grid.mjs";
 /* Settings card + the shared bound settings scope (rc.7 settings.plugin.item).
  * getSettingsScope is imported for module-internal use (the theme chain);
  * SettingsCard/setSettingsScope are re-exported for the build.mjs wrapper. */
@@ -87,6 +97,10 @@ const CSS = `
 .dmsTabClose{width:20px;height:20px;border:none;background:transparent;color:inherit;border-radius:6px;display:grid;place-items:center;cursor:pointer;padding:0;opacity:0;flex:none}
 .dmsTab:hover .dmsTabClose,.dmsTab.isActive .dmsTabClose{opacity:.65}
 .dmsTabClose:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover)}
+.dmsTabPin{width:18px;height:18px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;display:grid;place-items:center;cursor:pointer;padding:0;flex:none;opacity:.55}
+.dmsTab:hover .dmsTabPin{opacity:.8}
+.dmsTabPin:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover)}
+.dmsTabPin.isPinned{opacity:1;color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
 .dmsTool{flex:none;box-sizing:border-box;height:34px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip);font-size:12px}
 .dmsToolBtn{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer;flex:none}
 .dmsToolBtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
@@ -94,6 +108,19 @@ const CSS = `
 .dmsToolBtn.primary{background:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));border-color:transparent;color:#fff}
 .dmsToolBtn.primary:hover:not(:disabled){filter:brightness(1.1)}
 .dmsBody{flex:auto;min-height:0;position:relative;background:var(--dmst-bg,#1e2128);box-shadow:inset 0 1px 0 var(--dsw-alias-border-l1)}
+/* Grid: Tiles arrange pinned Terminal Sessions (ADR-0005). */
+.dmsGrid{position:relative;height:100%;display:grid;gap:4px;padding:4px 6px 8px;box-sizing:border-box}
+.dmsTile{position:relative;min-width:0;min-height:0;background:var(--dmst-bg,#1e2128);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
+.dmsTile.isDragFrom{opacity:.75}
+.dmsTile.isDragTarget{outline:2px solid var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));outline-offset:-2px}
+.dmsTileEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12px;cursor:pointer;background:var(--dmst-picker-bg,#262a33);border:none;width:100%}
+.dmsTileEmpty:hover{background:var(--dmst-picker-item-bg-hover,#2e333d);color:var(--dmst-picker-item-fg,#e6e8ee)}
+.dmsTileUnpin{position:absolute;top:6px;right:6px;z-index:6;width:24px;height:24px;border:none;background:rgba(0,0,0,.45);color:#e6e8ee;border-radius:7px;cursor:pointer;display:grid;place-items:center;padding:0;opacity:0;transition:opacity .12s}
+.dmsTile:hover .dmsTileUnpin,.dmsTileUnpin:focus-visible{opacity:1}
+.dmsTileUnpin:hover{background:rgba(231,72,86,.35)}
+.dmsTilePick{position:absolute;inset:0;z-index:7;display:flex;flex-direction:column;background:var(--dmst-picker-bg,#262a33);padding:8px;overflow-y:auto}
+.dmsTilePickTitle{font-size:11px;font-weight:600;color:var(--dmst-picker-label-fg,#8b90a0);padding:2px 6px 6px}
+.dmsDegrade{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12px;text-align:center;padding:20px}
 .dmsPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:var(--dmst-bg,#1e2128)}
 .dmsPane.isActive{display:block}
 .dmsEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12px}
@@ -344,10 +371,14 @@ const Icon = {
 function XtermPane({
   tab,
   active,
+  surface,
   onStatus,
 }: {
   tab: TermTab;
   active: boolean;
+  /** Surface key ("dock" | "focus"): the same session may render on both
+   *  surfaces at once, so each xterm instance registers under its own key. */
+  surface: string;
   onStatus: (patch: Partial<TermTab>) => void;
 }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
@@ -361,6 +392,7 @@ function XtermPane({
   // keep the latest callback without re-running the ws effect
   const onStatusRef = React.useRef(onStatus);
   onStatusRef.current = onStatus;
+  const registryKey = surface + ":" + tab.id;
 
   React.useEffect(() => {
     const el = hostRef.current;
@@ -380,7 +412,7 @@ function XtermPane({
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((_e, url) => window.open(url, "_blank", "noopener,noreferrer")));
     term.open(el);
-    termRegistry.set(tab.id, term);
+    termRegistry.set(registryKey, term);
     requestAnimationFrame(() => {
       try {
         fit.fit();
@@ -457,7 +489,7 @@ function XtermPane({
 
     return () => {
       closedByUs.current = true;
-      termRegistry.delete(tab.id);
+      termRegistry.delete(registryKey);
       el.removeEventListener("mouseup", onMouseUp);
       el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("contextmenu", onCtx);
@@ -488,6 +520,151 @@ function XtermPane({
   }, [active]);
 
   return <div className={"dmsPane" + (active ? " isActive" : "")} ref={hostRef} />;
+}
+
+/* ---------------- grid body ---------------- */
+
+/** The global GridState (ADR-0005): one Layout Template, one pin per Tile. */
+interface GridState {
+  template: string;
+  tiles: (string | null)[];
+}
+
+const TEMPLATE_LABEL: Record<string, string> = {
+  single: "单格",
+  "split-h": "左右",
+  "split-v": "上下",
+  "grid-4": "2×2",
+  "main-2": "1大2小",
+};
+
+function PinIcon() {
+  return (
+    <svg width={11} height={11} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8.9 1.1l.7.7-4.2 4.2.7.7 4.2-4.2.7.7-3.4 3.4 1.5 1.5 1.1-1.1 1.4 1.4-1.1 1.1 2.8 2.8-1.4 1.4-2.8-2.8-1.1 1.1L8 8.4 4.6 9.9l-1.5-1.5.7-.7-1.4-1.4-.7.7L.4 4.9 4.9.4 8.9 1.1z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
+ * The Grid: arranges pinned Terminal Sessions into Tiles per the Layout
+ * Template. Shared by the Dock (cap 2 via fitCount) and the Focus View
+ * (cap 4). Tiles are positional — `visCount` leading tiles render, trailing
+ * ones degrade back to the tab strip. Empty Tiles offer a picker of unpinned
+ * sessions; Tiles can be dragged onto each other to reorder.
+ */
+function GridBody({
+  grid,
+  tabs,
+  visCount,
+  surface,
+  onStatus,
+  onUnpin,
+  onReorder,
+  onPickEmpty,
+}: {
+  grid: GridState;
+  tabs: TermTab[];
+  visCount: number;
+  surface: string;
+  onStatus: (tabId: string, patch: Partial<TermTab>) => void;
+  onUnpin: (tileIndex: number) => void;
+  onReorder: (from: number, to: number) => void;
+  onPickEmpty: (tileIndex: number, sessionId: string) => void;
+}) {
+  const [dragFrom, setDragFrom] = React.useState<number | null>(null);
+  const [dragOver, setDragOver] = React.useState<number | null>(null);
+  const [pickFor, setPickFor] = React.useState<number | null>(null);
+  const visible = Math.max(0, Math.min(visCount, grid.tiles.length));
+  const pinned = new Set(grid.tiles.filter((t): t is string => t !== null));
+  const unpinnedTabs = tabs.filter((t) => !pinned.has(t.id));
+
+  // Release drag state on pointerup anywhere.
+  React.useEffect(() => {
+    if (dragFrom === null) return;
+    const up = () => {
+      setDragFrom(null);
+      setDragOver(null);
+    };
+    window.addEventListener("pointerup", up);
+    return () => window.removeEventListener("pointerup", up);
+  }, [dragFrom]);
+
+  const tileDragProps = (idx: number) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
+      setDragFrom(idx);
+    },
+    onPointerEnter: () => {
+      if (dragFrom !== null && dragFrom !== idx) setDragOver(idx);
+    },
+    onPointerUp: () => {
+      if (dragFrom !== null && dragOver !== null && dragOver !== dragFrom) {
+        onReorder(dragFrom, dragOver);
+      }
+      setDragFrom(null);
+      setDragOver(null);
+    },
+  });
+
+  return (
+    <div className="dmsGrid" style={{ gridTemplateAreas: gridAreas(grid.template) }}>
+      {grid.tiles.slice(0, visible).map((sessionId, idx) => {
+        const area = tileLetter(grid.template, idx);
+        const dragClass =
+          "dmsTile" +
+          (dragFrom === idx ? " isDragFrom" : "") +
+          (dragOver === idx ? " isDragTarget" : "");
+        if (sessionId === null) {
+          return (
+            <div key={"tile-empty-" + idx} className={dragClass} style={{ gridArea: area }} {...tileDragProps(idx)}>
+              <button className="dmsTileEmpty" onClick={() => setPickFor((v) => (v === idx ? null : idx))}>
+                {Icon.plus()} 放入终端
+              </button>
+              {pickFor === idx && (
+                <div className="dmsTilePick">
+                  <div className="dmsTilePickTitle">选择要放入的终端</div>
+                  {unpinnedTabs.length === 0 ? (
+                    <span style={{ padding: "6px", color: "var(--dmst-picker-label-fg,#8b90a0)", fontSize: 12 }}>
+                      没有可放入的终端，先开一个会话
+                    </span>
+                  ) : (
+                    unpinnedTabs.map((t) => (
+                      <button
+                        key={t.id}
+                        className="dmsPickerItem"
+                        onClick={() => {
+                          onPickEmpty(idx, t.id);
+                          setPickFor(null);
+                        }}
+                      >
+                        <span className="dmsPickerMeta">{Icon.terminal(13)}</span>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        }
+        const tab = tabs.find((t) => t.id === sessionId);
+        return (
+          <div key={"tile-" + sessionId} className={dragClass} style={{ gridArea: area }} {...tileDragProps(idx)}>
+            <XtermPane
+              tab={tab ?? { id: sessionId, serverId: "", label: "…", status: "connecting" }}
+              active={true}
+              surface={surface}
+              onStatus={(patch) => onStatus(sessionId, patch)}
+            />
+            <button className="dmsTileUnpin" title="移回标签栏" aria-label="移回标签栏" onClick={() => onUnpin(idx)}>
+              {Icon.close()}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /* ---------------- server form ---------------- */
@@ -993,6 +1170,71 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
   const [height, setHeight] = React.useState(heightRef.current);
   const bodyRef = React.useRef<HTMLDivElement>(null);
 
+  /* ---- global Grid state (ADR-0005) ---- */
+  const [grid, setGrid] = React.useState<GridState>({ template: "single", tiles: [null] });
+  /** Optimistic local mutation + authoritative PUT; broadcasts from the host
+   *  (other surfaces, dead-session cleanup) overwrite via the ws below. */
+  const commitGrid = React.useCallback((next: GridState) => {
+    setGrid(next);
+    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) =>
+      console.error("[dsh-ssh-hub] grid PUT failed:", e),
+    );
+  }, []);
+
+  // Load the global GridState and subscribe to pushes: one world, many
+  // viewfinders — every Dock and the Focus View converge on the same value.
+  React.useEffect(() => {
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    api("/grid")
+      .then((b) => {
+        if (!cancelled) setGrid(b.grid ?? { template: "single", tiles: [null] });
+      })
+      .catch(() => {
+        /* older host: no grid route — keep the local default */
+      });
+    try {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(proto + "//" + location.host + PREFIX + "/grid/events");
+      ws.onmessage = (ev) => {
+        if (typeof ev.data !== "string" || cancelled) return;
+        try {
+          setGrid(JSON.parse(ev.data));
+        } catch {
+          /* ignore malformed push */
+        }
+      };
+    } catch {
+      /* ws unavailable */
+    }
+    return () => {
+      cancelled = true;
+      ws?.close();
+    };
+  }, []);
+
+  // Measure the Terminal Area so fitCount can decide how many Tiles fit here
+  // (the Dock caps at two; the Focus View passes its own cap).
+  const [gridSize, setGridSize] = React.useState({ w: 0, h: 0 });
+  React.useEffect(() => {
+    const el = bodyRef.current;
+    if (el === null) return;
+    const measure = () => setGridSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open]);
+  const visCount = gridSize.w > 0 ? fitCount(grid.template, gridSize.w, gridSize.h, 2) : 0;
+  /** Dock template cycle: only the two-way splits are offered here. */
+  const DOCK_TEMPLATES = ["single", "split-h", "split-v"];
+  const cycleTemplate = () => {
+    const cur = grid.template;
+    const idx = DOCK_TEMPLATES.indexOf(cur);
+    const next = DOCK_TEMPLATES[(idx + 1) % DOCK_TEMPLATES.length];
+    commitGrid(gridWithTemplate(grid, next));
+  };
+
   // Resolved Terminal Theme: the Theme Override wins over the GUI scheme.
   const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
   const [override, setOverride] = React.useState<ThemeOverride>(() => {
@@ -1209,6 +1451,22 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
 
   const activeTab = tabs.find((t) => t.id === active) ?? null;
 
+  /* ---- Grid mutations (optimistic + PUT, broadcast converges) ---- */
+  const pinTab = (id: string) => {
+    const free = grid.tiles.indexOf(null);
+    if (free === -1) return false;
+    commitGrid(gridPin(grid, id, free));
+    setActive(id);
+    return true;
+  };
+  const unpinTile = (idx: number) => commitGrid(gridUnpin(grid, idx));
+  const reorderTiles = (from: number, to: number) => commitGrid(gridReorder(grid, from, to));
+  const pickEmpty = (idx: number, sessionId: string) => {
+    commitGrid(gridPin(grid, sessionId, idx));
+    setActive(sessionId);
+  };
+  const pinnedIndex = (id: string) => grid.tiles.indexOf(id);
+
   const stateLabel =
     tabs.length === 0
       ? loading
@@ -1245,10 +1503,31 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
                   role="tab"
                   aria-selected={t.id === active}
                   className={"dmsTab" + (t.id === active ? " isActive" : "") + (t.status === "closed" || t.status === "error" ? " isClosed" : "")}
-                  onClick={() => setActive(t.id)}
+                  onClick={() => {
+                    setActive(t.id);
+                    // Clicking an unpinned tab shows it: pin it into the first
+                    // free Tile (when the Grid has room).
+                    const free = grid.tiles.indexOf(null);
+                    if (pinnedIndex(t.id) === -1 && free !== -1) {
+                      commitGrid(gridPin(grid, t.id, free));
+                    }
+                  }}
                 >
                   <span className={dotClass(t.status)} />
                   <span className="dmsTabLabel">{t.label}</span>
+                  <span
+                    className={"dmsTabPin" + (pinnedIndex(t.id) >= 0 ? " isPinned" : "")}
+                    role="button"
+                    title={pinnedIndex(t.id) >= 0 ? "从网格移回标签栏" : "钉入网格（同屏显示）"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const idx = pinnedIndex(t.id);
+                      if (idx >= 0) unpinTile(idx);
+                      else pinTab(t.id);
+                    }}
+                  >
+                    {PinIcon()}
+                  </span>
                   <span
                     className="dmsTabClose"
                     role="button"
@@ -1292,6 +1571,14 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
             </button>
             <button
               className="dmsToolBtn"
+              title="布局模板（点击切换：单格 / 左右 / 上下）"
+              aria-label="布局模板（点击切换）"
+              onClick={cycleTemplate}
+            >
+              布局:{TEMPLATE_LABEL[grid.template] ?? grid.template}
+            </button>
+            <button
+              className="dmsToolBtn"
               style={{ marginLeft: "auto" }}
               title={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
               aria-label={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
@@ -1306,16 +1593,6 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
             </span>
           </div>
           <div className="dmsBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
-            {tabs.map((t) => (
-              <XtermPane
-                key={t.id}
-                tab={t}
-                active={t.id === active}
-                onStatus={(patch) => {
-                  setTabs((prev) => prev.map((x) => (x.id === t.id ? { ...x, ...patch } : x)));
-                }}
-              />
-            ))}
             {tabs.length === 0 ? (
               <div className="dmsEmpty">
                 <span>{servers.length === 0 ? "还没有服务器，先添加一台" : "选择一台服务器开始连接"}</span>
@@ -1329,7 +1606,24 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
                   </button>
                 )}
               </div>
-            ) : null}
+            ) : visCount === 0 ? (
+              <div className="dmsDegrade">
+                窗口太小，已钉的终端收回到标签栏。展开面板或进入专注视图可获得完整分屏。
+              </div>
+            ) : (
+              <GridBody
+                grid={grid}
+                tabs={tabs}
+                visCount={visCount}
+                surface="dock"
+                onStatus={(tabId, patch) =>
+                  setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))
+                }
+                onUnpin={unpinTile}
+                onReorder={reorderTiles}
+                onPickEmpty={pickEmpty}
+              />
+            )}
             {picker && (
               <ServerPicker servers={servers} busy={busy} onPick={connectTo} onManage={() => setDrawer(true)} onClose={() => setPicker(false)} />
             )}

@@ -550,6 +550,62 @@ check("explicitly closed session gone", !afterDel.body?.sessions?.some((s) => s.
 const delAgain = await req(`/ssh-hub/sessions/${sessionId2}`, "DELETE");
 check("DELETE missing -> 404", delAgain.status === 404);
 
+console.log("4d. global grid state (ADR-0005)");
+const g0 = await req("/ssh-hub/grid");
+check(
+  "GET /grid starts single with one empty tile",
+  g0.body?.grid?.template === "single" && Array.isArray(g0.body?.grid?.tiles) && g0.body?.grid?.tiles.length === 1 && g0.body?.grid?.tiles[0] === null,
+  JSON.stringify(g0.body),
+);
+
+const gsess = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
+const gsid = gsess.body?.id;
+check("grid fixture session opened", typeof gsid === "string");
+
+const gp = await req("/ssh-hub/grid", "PUT", { template: "split-h", tiles: [gsid, null] });
+check(
+  "PUT /grid saves template and pins",
+  gp.body?.grid?.template === "split-h" && gp.body?.grid?.tiles?.[0] === gsid && gp.body?.grid?.tiles?.[1] === null,
+  JSON.stringify(gp.body),
+);
+const g1 = await req("/ssh-hub/grid");
+check("GET /grid returns saved state", g1.body?.grid?.template === "split-h" && g1.body?.grid?.tiles?.[0] === gsid, JSON.stringify(g1.body));
+
+const gbad = await req("/ssh-hub/grid", "PUT", { template: "banana", tiles: [] });
+check("PUT /grid rejects unknown template", gbad.status === 400);
+const glen = await req("/ssh-hub/grid", "PUT", { template: "grid-4", tiles: [gsid] });
+check("PUT /grid rejects wrong tile count", glen.status === 400);
+const gdead = await req("/ssh-hub/grid", "PUT", { template: "split-h", tiles: ["ghost-session", gsid] });
+check("PUT /grid clears unknown session pins", gdead.body?.grid?.tiles?.[0] === null && gdead.body?.grid?.tiles?.[1] === gsid, JSON.stringify(gdead.body));
+
+// ws broadcast: connect, then PUT, expect the new state pushed.
+const gws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/grid/events`);
+const gridEvents = [];
+gws.on("message", (d) => gridEvents.push(JSON.parse(String(d))));
+await new Promise((res, rej) => {
+  const t = setTimeout(() => rej(new Error("grid ws open timeout")), 5000);
+  gws.on("open", () => {
+    clearTimeout(t);
+    res();
+  });
+  gws.on("error", (e) => {
+    clearTimeout(t);
+    rej(e);
+  });
+});
+await new Promise((r) => setTimeout(r, 300));
+check("grid ws receives initial state", gridEvents.length >= 1 && gridEvents[0]?.template === "split-h", JSON.stringify(gridEvents));
+await req("/ssh-hub/grid", "PUT", { template: "single", tiles: [gsid] });
+await new Promise((r) => setTimeout(r, 300));
+check("grid ws receives broadcast after PUT", gridEvents.some((e) => e?.template === "single"), JSON.stringify(gridEvents));
+gws.close();
+
+// Killing the pinned session clears its pins (registry reclaim hook).
+const gdel = await req(`/ssh-hub/sessions/${gsid}`, "DELETE");
+check("grid fixture session deleted", gdel.body?.ok === true);
+const g2 = await req("/ssh-hub/grid");
+check("deleting a session clears its pins", g2.body?.grid?.tiles?.[0] === null, JSON.stringify(g2.body));
+
 console.log("5. cleanup");
 const del = await req(`/ssh-hub/servers/${serverId}`, "DELETE");
 check("DELETE /servers/:id ok", del.body?.ok === true);
