@@ -1,6 +1,6 @@
 {
   "name": "dsh-ssh-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Multi-server SSH terminal panel for DeepSeek Harness Web GUI — manage hosts and open multiple SSH terminals in a bottom panel",
   "type": "module",
   "main": "lib/index.js",
