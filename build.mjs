@@ -1,0 +1,112 @@
+/**
+ * dsh-multi-server — build script.
+ *
+ * Two artifacts:
+ *  1. lib/index.js   — host half (Node ESM), bundled from src/host/index.ts
+ *  2. lib/client.js  — client half (browser bundle), built from
+ *                      src/client/client-main.tsx in the DSH ModuleLoader
+ *                      format (window.__ModuleLoader__.load) and shipped via
+ *                      the package's ./client export.
+ *
+ * The client bundle is fully self-contained except `react` (provided by the
+ * DSH web shell) and xterm.css (served by the host half at /multi-server/...).
+ */
+import { build } from "esbuild";
+import { writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const ROOT = fileURLToPath(new URL(".", import.meta.url));
+const out = (p) => fileURLToPath(new URL(p, import.meta.url));
+
+mkdirSync(out("./lib"), { recursive: true });
+
+/* ------------------------------------------------------------------ */
+/* 1. host half                                                        */
+/* ------------------------------------------------------------------ */
+await build({
+  entryPoints: [out("./src/host/index.ts")],
+  outfile: out("./lib/index.js"),
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: ["node20"],
+  sourcemap: true,
+  minify: false,
+  legalComments: "none",
+  logLevel: "warning",
+  external: ["ssh2", "ws"],
+});
+
+/* ------------------------------------------------------------------ */
+/* 2. client half                                                      */
+/* ------------------------------------------------------------------ */
+const clientEntry = out("./src/client/client-main.tsx");
+const result = await build({
+  entryPoints: [clientEntry],
+  bundle: true,
+  format: "cjs",
+  platform: "browser",
+  target: ["es2020"],
+  write: false,
+  // minify: false — esbuild's aggressive renaming can reorder const/let
+  // declarations across xterm's module boundaries and trigger
+  // "Cannot access 'X' before initialization" at runtime (TDZ).
+  minify: false,
+  legalComments: "none",
+  logLevel: "warning",
+  external: ["react"],
+  loader: { ".css": "css" },
+});
+
+const code = result.outputFiles[0].text;
+
+const factoryBody = [
+  "var module = { exports: {} };",
+  "var exports = module.exports;",
+  code,
+  "var __panel = module.exports.TerminalPanel ?? module.exports.default;",
+  "return {",
+  "  apply: function (ctx) {",
+  "    ctx.slots.inject('conversation.input.dock', function () {",
+  "      return ctx.slots.register(",
+  "        { name: 'conversation.input.dock', id: 'multi-server', order: 20 },",
+  "        __panel",
+  "      );",
+  "    });",
+  "  },",
+  "  inject: ['slots'],",
+  "};",
+].join("\n");
+
+const finalJs = [
+  "/**",
+  " * dsh-multi-server - client bundle (multi-server SSH terminal panel).",
+  " * Built by build.mjs from src/client/client-main.tsx. Do not edit by hand.",
+  " */",
+  "window.__ModuleLoader__.load({",
+  "  id: 'dsh-multi-server',",
+  "  factory: (require) => {",
+  "    " + factoryBody,
+  "  },",
+  "});",
+].join("\n");
+
+writeFileSync(out("./lib/client.js"), finalJs);
+
+/* ship xterm.css into lib (served by the host half) */
+try {
+  const xtermCssPath = require.resolve("@xterm/xterm/css/xterm.css");
+  copyFileSync(xtermCssPath, out("./lib/client.css"));
+  console.log("xterm.css copied");
+} catch {
+  console.warn("xterm.css not found — client degrades gracefully");
+}
+
+console.log(
+  "host:  lib/index.js (" +
+    (await import("node:fs")).statSync(out("./lib/index.js")).size +
+    " bytes)",
+);
+console.log("client: lib/client.js (" + finalJs.length + " bytes)");

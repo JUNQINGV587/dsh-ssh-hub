@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build host + client bundles
+        run: npm run build
+
+      - name: Install test sshd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-server
+
+      - name: Start test sshd
+        run: |
+          chmod +x scripts/setup-test-sshd.sh
+          sudo bash scripts/setup-test-sshd.sh &
+          sleep 2
+        env:
+          SSH_TEST_PORT: 2222
+
+      - name: Run integration tests
+        run: npm test
+        env:
+          SSH_TEST_HOST: 127.0.0.1
+          SSH_TEST_PORT: 2222
+          SSH_TEST_KEY: /tmp/dsh-multi-server-test-sshd/client_key
