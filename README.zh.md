@@ -4,7 +4,6 @@
 
 集中管理一批 SSH 服务器，在底部面板里**同时打开多个交互式终端**——相当于把轻量级多标签 SSH 客户端内建进 DSH 会话。
 
-![panel](https://raw.githubusercontent.com/JUNQINGV587/dsh-ssh-hub/main/docs/screenshot.png)
 
 ## 特性
 

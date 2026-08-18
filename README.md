@@ -4,7 +4,6 @@
 
 Manage a list of SSH servers and open **multiple interactive terminals at once** in a bottom panel — like a lightweight web-based multi-tab SSH client built into your DSH conversation.
 
-![panel](https://raw.githubusercontent.com/JUNQINGV587/dsh-ssh-hub/main/docs/screenshot.png)
 
 ## Features
 
