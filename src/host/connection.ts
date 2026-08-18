@@ -16,6 +16,7 @@ import { join as pathJoin } from "node:path";
 import { homedir } from "node:os";
 import type { ServerConfig, TerminalSession, TestResult } from "./types.js";
 import { resolveKeyPath } from "./store.js";
+import { Scrollback } from "./scrollback.js";
 
 /**
  * Connection tunables for one attempt. The server's own field wins; when it
@@ -207,6 +208,9 @@ export function createShellSession(
             exited: false,
             exitDetail: null,
             wsClients: new Set(),
+            buffer: new Scrollback(),
+            lastDetachedAt: null,
+            idleTimer: null,
           };
           stream.on("close", () => {
             session.exited = true;

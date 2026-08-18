@@ -352,6 +352,9 @@ function XtermPane({
   const fitRef = React.useRef<FitAddon | null>(null);
   const wsRef = React.useRef<WebSocket | null>(null);
   const closedByUs = React.useRef(false);
+  // Exited sessions stay attachable (scrollback replay) but must not flip to
+  // "live" when the ws opens; only the live state transition is allowed.
+  const initialStatus = React.useRef(tab.status);
   // keep the latest callback without re-running the ws effect
   const onStatusRef = React.useRef(onStatus);
   onStatusRef.current = onStatus;
@@ -389,7 +392,9 @@ function XtermPane({
     const ws = new WebSocket(proto + "//" + location.host + PREFIX + "/ws/" + tab.id);
     wsRef.current = ws;
     ws.onopen = () => {
-      onStatusRef.current({ status: "live" });
+      onStatusRef.current({
+        status: initialStatus.current === "closed" ? "closed" : "live",
+      });
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       }
@@ -1070,14 +1075,43 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
     refreshDefaults();
   }, [refreshServers, refreshDefaults]);
 
-  // restore previous panel state across refresh
+  // Rebuild the tab list from the host on mount. Terminal Sessions are
+  // host-owned (ADR-0004): any surface (this panel, another conversation's
+  // panel, the Focus View) attaches and detaches freely, so tab state is a
+  // projection of the live session list, not per-conversation local state.
+  // This is what makes "collapse / refresh / switch conversation" reconnect
+  // to the same running shells with their scrollback replayed.
   React.useEffect(() => {
-    try {
-      const prev = localStorage.getItem("dsh-ssh-hub.open");
-      if (prev === "1" && tabs.length === 0) setOpen(true);
-    } catch {
-      /* ignore */
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const body = await api("/sessions");
+        if (cancelled) return;
+        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
+          body.sessions ?? [];
+        setTabs(
+          remote.map((s) => ({
+            id: s.id,
+            serverId: s.serverId,
+            label: s.serverName || s.label,
+            status: s.exited ? "closed" : "connecting",
+          })),
+        );
+        if (remote.length > 0) setActive(remote[0].id);
+        let prevOpen = false;
+        try {
+          prevOpen = localStorage.getItem("dsh-ssh-hub.open") === "1";
+        } catch {
+          /* ignore */
+        }
+        if (remote.length > 0 || prevOpen) setOpen(true);
+      } catch (e) {
+        console.error("[dsh-ssh-hub] load sessions failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   React.useEffect(() => {

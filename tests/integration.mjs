@@ -74,7 +74,7 @@ rmSync(process.env.DSH_HOME + "/plugin-data/ssh-hub", {
   recursive: true,
   force: true,
 });
-apply(ctx, {});
+apply(ctx, { idleReclaimMs: 3000 });
 
 const server = http.createServer(async (req, res) => {
   for (const r of routes) {
@@ -152,6 +152,46 @@ function openWs(sessionId, timeoutMs = 8000) {
     ws.on("open", () => {
       clearTimeout(timer);
       resolve(ws);
+    });
+    ws.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
+}
+
+/**
+ * Open a session ws with the message collector attached BEFORE the socket
+ * opens. ws 8.21 processes frames received during the handshake synchronously
+ * (allowSynchronousEvents: true), so a listener attached after 'open' can
+ * miss the replay entirely — this is exactly the reattach race.
+ */
+function collectWs(sessionId, timeoutMs = 8000) {
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/ws/${sessionId}`);
+  const collected = [];
+  ws.on("message", (d) => collected.push(String(d)));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("ws open timeout")), timeoutMs);
+    ws.on("open", () => {
+      clearTimeout(timer);
+      resolve({
+        ws,
+        text: () => collected.join(""),
+        waitFor: (needle, waitMs = 8000) =>
+          new Promise((res2, rej2) => {
+            const t2 = setTimeout(
+              () => rej2(new Error(`no "${needle}" within ${waitMs}ms; got: ${collected.join("").slice(-400)}`)),
+              waitMs,
+            );
+            const iv = setInterval(() => {
+              if (collected.join("").includes(needle)) {
+                clearTimeout(t2);
+                clearInterval(iv);
+                res2(collected.join(""));
+              }
+            }, 50);
+          }),
+      });
     });
     ws.on("error", (e) => {
       clearTimeout(timer);
@@ -463,11 +503,52 @@ const sessionsNow = await req("/ssh-hub/sessions");
 check("GET /sessions lists live session", sessionsNow.body?.sessions?.some((s) => s.id === sessionId));
 check("session label correct", sessionsNow.body?.sessions?.find((s) => s.id === sessionId)?.label === `root@${SSH_HOST}:${SSH_PORT}`);
 
+console.log("4b. host-owned sessions: detach survives, replay on reattach, idle reclaim");
 ws.close();
 
 await new Promise((r) => setTimeout(r, 500));
-const sessionsAfter = await req("/ssh-hub/sessions");
-check("session torn down after ws close", !sessionsAfter.body?.sessions?.some((s) => s.id === sessionId));
+const sessionsAfterDetach = await req("/ssh-hub/sessions");
+check("session survives ws close (detach, not kill)", sessionsAfterDetach.body?.sessions?.some((s) => s.id === sessionId));
+
+// Reattach: the second ws must receive a replay of the earlier output WITHOUT
+// us typing anything — proof the host buffered while detached. The collector
+// is attached before open so the handshake-synchronous frames aren't missed.
+const r2 = await collectWs(sessionId);
+const replay = await r2.waitFor("DSH_MS_OK");
+check("reattached ws receives scrollback replay", replay.includes("DSH_MS_OK"), replay.slice(-200));
+
+r2.ws.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
+r2.ws.send("echo DSH_MS_TWO\r");
+const live2 = await r2.waitFor("DSH_MS_TWO");
+check("reattached ws still gets live output", live2.includes("DSH_MS_TWO"), live2.slice(-200));
+
+// Idle reclaim: no clients for idleReclaimMs (3000, injected at apply) -> reaped.
+r2.ws.close();
+await new Promise((r) => setTimeout(r, 4500));
+const sessionsAfterIdle = await req("/ssh-hub/sessions");
+check("idle session reclaimed after timeout", !sessionsAfterIdle.body?.sessions?.some((s) => s.id === sessionId));
+const rejected = await new Promise((resolve) => {
+  const w = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/ws/${sessionId}`);
+  w.on("open", () => {
+    w.close();
+    resolve(false);
+  });
+  w.on("error", () => resolve(true));
+});
+check("ws attach to reaped session rejected", rejected);
+
+console.log("4c. explicit close still terminates");
+const sess2 = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
+const sessionId2 = sess2.body?.id;
+const ws3 = await openWs(sessionId2);
+await new Promise((r) => setTimeout(r, 300));
+ws3.close();
+const del4 = await req(`/ssh-hub/sessions/${sessionId2}`, "DELETE");
+check("DELETE /sessions/:id kills explicitly", del4.body?.ok === true, JSON.stringify(del4.body));
+const afterDel = await req("/ssh-hub/sessions");
+check("explicitly closed session gone", !afterDel.body?.sessions?.some((s) => s.id === sessionId2));
+const delAgain = await req(`/ssh-hub/sessions/${sessionId2}`, "DELETE");
+check("DELETE missing -> 404", delAgain.status === 404);
 
 console.log("5. cleanup");
 const del = await req(`/ssh-hub/servers/${serverId}`, "DELETE");

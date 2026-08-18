@@ -26,8 +26,11 @@ import { WebSocketServer } from "ws";
 import type { ServerConfig, ServerDefaults, TerminalSession, TestResult } from "./types.js";
 import { ServerStore, resolveDshHome, serverFromInput, SECRET_FIELDS, type ServerInput } from "./store.js";
 import { testConnection, createShellSession } from "./connection.js";
+import { SessionRegistry } from "./registry.js";
 
 const PREFIX = "/ssh-hub";
+/** Default idle reclaim for a session with no attached clients (ADR-0004). */
+const DEFAULT_IDLE_RECLAIM_MS = 30 * 60 * 1000;
 /** Schema defaults for the `ssh-hub` settings namespace (ADR 0003). */
 const DEFAULT_SERVER_DEFAULTS: ServerDefaults = {
   defaultReadyTimeoutSec: 15,
@@ -64,9 +67,14 @@ try {
 /** Route namespace; the client half must agree. */
 export const inject = ["webServer"];
 
-export function apply(ctx: any, _config: unknown) {
+export function apply(ctx: any, config: any) {
   const webServer = ctx.webServer;
   const store = new ServerStore(resolveDshHome());
+  /** Idle reclaim for sessions with no attached clients (ADR-0004); tests inject a short value. */
+  const idleReclaimMs =
+    typeof config?.idleReclaimMs === "number" && config.idleReclaimMs > 0
+      ? config.idleReclaimMs
+      : DEFAULT_IDLE_RECLAIM_MS;
 
   /**
    * Current Server Defaults. Starts at the schema defaults; replaced when the
@@ -119,31 +127,27 @@ export function apply(ctx: any, _config: unknown) {
     };
   };
 
-  /** live terminal sessions: id -> session */
-  const sessions = new Map<string, TerminalSession>();
+  /** live terminal sessions: id -> session (host-owned, ADR-0004) */
+  const registry = new SessionRegistry(idleReclaimMs);
   /** id -> per-session WS upgrade route disposer */
   const upgradeDisposers = new Map<string, () => void>();
+
+  // Reclaim disposes the session's WS upgrade route along with the session.
+  registry.onReclaim((id) => {
+    upgradeDisposers.get(id)?.();
+    upgradeDisposers.delete(id);
+  });
 
   /** Unpredictable session id: readable counter prefix + crypto-random suffix. */
   let sessionCounter = 0;
   const makeId = () => `s${++sessionCounter}-${randomUUID()}`;
 
   function killSession(id: string): boolean {
-    const record = sessions.get(id);
-    if (record === undefined) return false;
-    try {
-      record.stream.end();
-      record.client.end();
-    } catch {
-      /* already gone */
-    }
-    return true;
+    return registry.kill(id);
   }
 
   function forgetSession(id: string) {
-    sessions.delete(id);
-    upgradeDisposers.get(id)?.();
-    upgradeDisposers.delete(id);
+    registry.forget(id);
   }
 
   /** Reject cross-origin requests: the DSH webserver has no auth by design,
@@ -182,7 +186,7 @@ export function apply(ctx: any, _config: unknown) {
 
   /** Wire a session's stream to WebSocket clients (binary data + resize). */
   function registerSessionWs(id: string) {
-    const record = sessions.get(id);
+    const record = registry.get(id);
     if (record === undefined) return;
     upgradeDisposers.set(
       id,
@@ -195,16 +199,30 @@ export function apply(ctx: any, _config: unknown) {
             socket.destroy();
             return;
           }
-          const current = sessions.get(id);
-          if (current === undefined || current.exited) {
+          // Exited sessions stay attachable: the client gets the scrollback
+          // replay plus the exit state instead of a refused socket.
+          const current = registry.get(id);
+          if (current === undefined) {
             socket.destroy();
             return;
           }
           const wss = new WebSocketServer({ noServer: true });
           wss.on("connection", (ws) => {
-            current.wsClients.add(ws);
-            // resend a fresh prompt so the user sees a live shell immediately
-            ws.send("\r\n");
+            // Send nothing synchronously: frames written during the upgrade
+            // callback are dropped by ws (the socket is not writable yet), so
+            // the whole attach + replay moves to the next turn. Ordering stays
+            // sound: the client is added to the broadcast set only inside the
+            // deferred block, so no live frame can reach it before the replay,
+            // and the snapshot taken there still covers any output that
+            // arrived in the gap (it all went into the scrollback ring).
+            setImmediate(() => {
+              registry.attach(id);
+              current.wsClients.add(ws);
+              const replay = current.buffer.snapshot();
+              if (replay.length > 0) ws.send(replay);
+              // resend a fresh prompt so the user sees a live shell immediately
+              ws.send("\r\n");
+            });
             ws.on("message", (data) => {
               if (current.exited) return;
               const text = String(data);
@@ -232,11 +250,9 @@ export function apply(ctx: any, _config: unknown) {
             });
             ws.on("close", () => {
               current.wsClients.delete(ws);
-              // Last client gone: tear the session down (v1: no persistence).
-              if (current.wsClients.size === 0 && !current.exited) {
-                killSession(id);
-                forgetSession(id);
-              }
+              // Detach, never kill: the session lives on the host until an
+              // explicit close or the idle reclaim (ADR-0004).
+              registry.detach(id);
             });
           });
           wss.on("error", () => socket.destroy());
@@ -260,10 +276,11 @@ export function apply(ctx: any, _config: unknown) {
       const session = await createShellSession(server, cols, rows, connTunables());
       const id = makeId();
       session.id = id;
-      sessions.set(id, session);
+      registry.add(session);
       registerSessionWs(id);
-      // stream -> all websocket clients
+      // stream -> scrollback ring + all websocket clients
       session.stream.on("data", (data: Buffer) => {
+        session.buffer.push(data);
         for (const ws of session.wsClients) {
           if (ws.readyState === ws.OPEN) ws.send(data);
         }
@@ -381,8 +398,8 @@ export function apply(ctx: any, _config: unknown) {
               return;
             }
             // kill sessions bound to this server
-            for (const sid of [...sessions.keys()]) {
-              if (sessions.get(sid)?.serverId === id) {
+            for (const sid of [...registry.sessions.keys()]) {
+              if (registry.get(sid)?.serverId === id) {
                 killSession(sid);
                 forgetSession(sid);
               }
@@ -418,7 +435,7 @@ export function apply(ctx: any, _config: unknown) {
         // ---- sessions ----
         if (rest === "/sessions" && method === "GET") {
           json(res, 200, {
-            sessions: [...sessions.values()].map((s) => ({
+            sessions: registry.list().map((s) => ({
               id: s.id,
               serverId: s.serverId,
               label: s.label,
@@ -467,8 +484,8 @@ export function apply(ctx: any, _config: unknown) {
       disposeRoute();
       for (const [, dispose] of upgradeDisposers) dispose();
       upgradeDisposers.clear();
-      for (const id of [...sessions.keys()]) killSession(id);
-      sessions.clear();
+      for (const id of [...registry.sessions.keys()]) killSession(id);
+      registry.sessions.clear();
     };
   });
 

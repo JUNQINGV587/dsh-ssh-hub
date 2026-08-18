@@ -7,6 +7,7 @@
  */
 import type { Client, ClientChannel } from "ssh2";
 import type { WebSocket } from "ws";
+import type { Scrollback } from "./scrollback.js";
 
 export type AuthKind = "password" | "privateKey" | "agent" | "none";
 
@@ -89,6 +90,12 @@ export interface TerminalSession {
   exitDetail: string | null;
   /** WebSocket clients attached to this session. */
   wsClients: Set<WebSocket>;
+  /** Host-owned output ring, replayed to each new client (ADR-0004). */
+  buffer: Scrollback;
+  /** Set when the last client detaches, null while attached (registry-owned). */
+  lastDetachedAt: number | null;
+  /** Pending idle-reclaim timer (registry-owned). */
+  idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface TestResult {
