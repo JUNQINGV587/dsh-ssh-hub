@@ -22,6 +22,13 @@ import { toServerView } from "./types.js";
 
 const AUTH_KINDS: AuthKind[] = ["password", "privateKey", "agent", "none"];
 
+/**
+ * Fields that hold credential material. The single source of truth for which
+ * fields must never leave the host process (API views, export) and must not
+ * be accepted from import payloads (ADR 0001).
+ */
+export const SECRET_FIELDS = ["password", "privateKey", "passphrase"] as const;
+
 export class ServerStore {
   private servers = new Map<string, ServerConfig>();
   private file: string;
@@ -89,25 +96,38 @@ export class ServerStore {
   upsert(input: ServerInput): ServerView {
     const now = Date.now();
     const existing = input.id ? this.servers.get(input.id) : undefined;
+    // Effective Auth Kind mirrors normalizeServer's fallback ("password").
+    const effectiveKind: AuthKind =
+      input.authKind !== undefined
+        ? AUTH_KINDS.includes(input.authKind)
+          ? input.authKind
+          : "password"
+        : (existing?.authKind ?? "password");
+    const sameKind = existing !== undefined && effectiveKind === existing.authKind;
+    const base: Record<string, unknown> = existing ? { ...existing } : {};
+    if (!sameKind) {
+      // Kind changed (or new server): never carry secrets from the previous
+      // record — a stale credential must not resurrect as the live one, and
+      // secrets for a method no longer in use must not linger on disk
+      // (ADR 0001).
+      for (const field of SECRET_FIELDS) delete base[field];
+    }
     const config: ServerConfig = {
-      ...normalizeServer({ ...(existing ?? {}), ...input }),
+      ...normalizeServer({ ...base, ...input }),
       id: existing?.id ?? randomUUID(),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    // Empty secret fields on update mean "keep existing"; explicit "clear"
-    // markers are handled by the caller sending null-ish values. When a
-    // client sends no password/privateKey at all we preserve what we have.
-    if (existing && config.authKind === "password" && input.password === undefined) {
-      config.password = existing.password;
-    }
-    if (
-      existing &&
-      (config.authKind === "privateKey") &&
-      input.privateKey === undefined
-    ) {
-      config.privateKey = existing.privateKey;
-      config.passphrase = input.passphrase === undefined ? existing.passphrase : input.passphrase;
+    // Empty secret fields on update mean "keep existing" — but only within the
+    // same Auth Kind (see above).
+    if (sameKind) {
+      if (config.authKind === "password" && input.password === undefined) {
+        config.password = existing!.password;
+      }
+      if (config.authKind === "privateKey" && input.privateKey === undefined) {
+        config.privateKey = existing!.privateKey;
+        if (input.passphrase === undefined) config.passphrase = existing!.passphrase;
+      }
     }
     this.servers.set(config.id, config);
     this.persist();

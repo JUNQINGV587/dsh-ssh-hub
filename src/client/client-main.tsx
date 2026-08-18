@@ -115,6 +115,7 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsErrText{font-size:12px;color:#e6b0b0;line-height:1.5;white-space:pre-wrap}
 .dmsOkText{font-size:12px;color:#7ddb7d;line-height:1.5}
 .dmsDrawerFoot{flex:none;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dmsTransferMsg{flex:none;padding:8px 14px 0}
 .dmsBtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-primary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;font-weight:500;cursor:pointer;flex:none}
 .dmsBtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dmsBtn:disabled{cursor:default;opacity:.45}
@@ -577,6 +578,64 @@ function ServerDrawer({
   const [adding, setAdding] = React.useState(false);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [testResult, setTestResult] = React.useState<Record<string, { ok: boolean; message: string }>>({});
+  const [transferBusy, setTransferBusy] = React.useState(false);
+  /** Dialog-level feedback for export/import (spec: failures surface in-dialog, not window.alert). */
+  const [transferMsg, setTransferMsg] = React.useState<{ ok: boolean; text: string } | null>(null);
+  const importFileRef = React.useRef<HTMLInputElement | null>(null);
+
+  /** Download the secret-stripped export as ssh-hub-servers.json. */
+  const doExport = async () => {
+    setTransferBusy(true);
+    setTransferMsg(null);
+    try {
+      const res = await fetch(PREFIX + "/servers/export");
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          msg = (await res.json())?.error ?? msg;
+        } catch {
+          /* non-JSON error body */
+        }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ssh-hub-servers.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setTransferMsg({ ok: true, text: "已导出 ssh-hub-servers.json（不含密码/密钥）。" });
+    } catch (e) {
+      setTransferMsg({ ok: false, text: "导出失败：" + String(e instanceof Error ? e.message : e) });
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
+  /** Upload an export file; every entry is added as a NEW server. */
+  const doImportFile = async (file: File) => {
+    setTransferBusy(true);
+    setTransferMsg(null);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error("文件不是有效的 JSON");
+      }
+      const res = await api("/servers/import", { method: "POST", body: JSON.stringify(parsed) });
+      setTransferMsg({ ok: true, text: `已导入 ${res.imported} 台服务器（密码/密钥不随文件迁移，请逐台重新填写）。` });
+      onChanged();
+    } catch (e) {
+      setTransferMsg({ ok: false, text: "导入失败：" + String(e instanceof Error ? e.message : e) });
+    } finally {
+      setTransferBusy(false);
+    }
+  };
 
   const doTest = async (s: ServerView) => {
     setBusyId(s.id);
@@ -700,8 +759,40 @@ function ServerDrawer({
             </React.Fragment>
           )}
         </div>
+        {editing === null && !adding && transferMsg !== null && (
+          <div className="dmsTransferMsg">
+            <div className={transferMsg.ok ? "dmsOkText" : "dmsErrText"}>{transferMsg.text}</div>
+          </div>
+        )}
         {editing === null && !adding && (
           <div className="dmsDrawerFoot">
+            <button
+              className="dmsBtn"
+              disabled={transferBusy || servers.length === 0}
+              title="导出为 JSON 文件（不含密码/密钥）"
+              onClick={doExport}
+            >
+              导出配置
+            </button>
+            <button
+              className="dmsBtn"
+              disabled={transferBusy}
+              title="从 JSON 文件导入（一律新增，不覆盖现有服务器）"
+              onClick={() => importFileRef.current?.click()}
+            >
+              导入配置
+            </button>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void doImportFile(f);
+              }}
+            />
             <div className="dmsSpacer" />
             <button className="dmsBtn primary" onClick={() => setAdding(true)}>
               {Icon.plus()} 添加服务器

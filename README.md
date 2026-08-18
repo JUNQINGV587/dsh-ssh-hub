@@ -56,11 +56,13 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 
 3. Click **新会话** (New session) → pick a server → an SSH terminal opens in a new tab.
 4. Type, select-to-copy, right-click-to-paste. Drag the top edge of the panel to resize it.
+5. Moving to a new machine? Use **导出配置** (Export) / **导入配置** (Import) in the manage-servers dialog. The exported JSON contains **no secrets** — re-enter passwords/keys after importing. Import always adds entries as new servers and never overwrites existing ones.
 
 ## Security notes
 
-- Credentials are stored in `$DSH_HOME/plugin-data/ssh-hub/servers.json` (default `~/.dsh/…`), written with mode `0600`.
-- The REST API never returns passwords or private keys — only `hasPassword` / `hasPrivateKey` flags.
+- Credentials are stored **in plaintext** in `$DSH_HOME/plugin-data/ssh-hub/servers.json` (default `~/.dsh/…`), written with mode `0600`. **File permissions are the only line of defense** — do not commit, sync, or back up this file anywhere plaintext credentials would be unacceptable. Machine-key encryption was considered and rejected: a process running as your user could read the key anyway (see `docs/adr/0001-credential-security-posture.md`).
+- Switching a server's auth method **deletes the credentials of the previous method** from disk (e.g. switching to `SSH Agent` wipes the stored password).
+- The REST API never returns passwords or private keys — only `hasPassword` / `hasPrivateKey` flags. The export file follows the same rule.
 - WebSocket terminals are same-origin gated: cross-origin pages cannot connect to a session.
 - Connection attempts honor your server's host-key policy via `strictHostKey` (default off); turn it on for stricter verification.
 - This is a **trusted-host plugin**: it runs arbitrary shell commands on the servers you configure, on behalf of whoever can reach the DSH web UI. Deploy DSH with proper access control.

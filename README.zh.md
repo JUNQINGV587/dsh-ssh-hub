@@ -56,11 +56,13 @@ dsh plugin --profile web add /path/to/dsh-ssh-hub
 
 3. 点 **新会话** → 选择服务器 → 在新标签中打开 SSH 终端。
 4. 输入命令、选择即复制、右键粘贴；拖动面板顶边调整高度。
+5. 换新机器？在管理服务器对话框用 **导出配置** / **导入配置**。导出的 JSON **不含任何凭据**——导入后请逐台重新填写密码/密钥。导入一律新增条目，绝不覆盖现有服务器。
 
 ## 安全说明
 
-- 凭据存储在 `$DSH_HOME/plugin-data/ssh-hub/servers.json`（默认 `~/.dsh/…`），文件权限 `0600`。
-- REST API 永不返回密码或私钥，只返回 `hasPassword` / `hasPrivateKey` 标记。
+- 凭据以**明文**存储在 `$DSH_HOME/plugin-data/ssh-hub/servers.json`（默认 `~/.dsh/…`），文件权限 `0600`。**文件权限是唯一防线**——不要把这个文件提交、同步或备份到任何不能接受明文凭据的地方。机器密钥加密曾被考虑并否决：同用户进程反正能读到密钥（见 `docs/adr/0001-credential-security-posture.md`）。
+- 切换服务器的认证方式会**从磁盘删除**上一认证方式的凭据（如切到 `SSH Agent` 会清除已存密码）。
+- REST API 永不返回密码或私钥，只返回 `hasPassword` / `hasPrivateKey` 标记；导出文件同理。
 - 终端 WebSocket 做了同源校验：跨源页面无法连接会话。
 - 连接遵循服务器的 host key 策略（`strictHostKey` 默认关闭，需要更严格校验可开启）。
 - 这是**受信插件**：它会在你配置的服务器上执行任意 shell 命令。请确保 DSH Web 的访问受控。

@@ -116,6 +116,29 @@ function openWs(sessionId, timeoutMs = 8000) {
 }
 
 /* ---------- scenario ---------- */
+const fs = await import("node:fs");
+const storeFile = process.env.DSH_HOME + "/plugin-data/ssh-hub/servers.json";
+/**
+ * Poll the on-disk store until `predicate(content)` holds (or the deadline
+ * passes, in which case the latest content is returned and the assertion
+ * fails on real data). Deterministic replacement for fixed-delay sleeps:
+ * the store flushes through a serialized promise chain, so we wait for the
+ * observable effect instead of guessing a duration.
+ */
+async function waitForDisk(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  let content = "";
+  for (;;) {
+    try {
+      content = fs.readFileSync(storeFile, "utf8");
+    } catch {
+      content = "";
+    }
+    if (predicate(content) || Date.now() > deadline) return content;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 console.log("1. server CRUD");
 
 const created = await req("/ssh-hub/servers", "POST", {
@@ -149,6 +172,9 @@ const updated = await req(`/ssh-hub/servers/${serverId}`, "PUT", {
 check("PUT updates same id", updated.body?.server?.id === serverId, JSON.stringify(updated.body));
 check("PUT applies new name", updated.body?.server?.name === "集成测试机-改");
 check("PUT preserves secret", updated.body?.server?.hasPrivateKey === true);
+// Same-kind regression, on disk: the PUT flush must leave the key untouched.
+const diskSameKind = await waitForDisk((c) => c.includes("集成测试机-改"));
+check("same-kind PUT keeps secret on disk", diskSameKind.includes(SSH_KEY));
 const listed1b = await req("/ssh-hub/servers");
 check(
   "no duplicate created by PUT",
@@ -171,6 +197,131 @@ const unsaved = await req("/ssh-hub/servers/test", "POST", {
   privateKey: SSH_KEY,
 });
 check("POST /servers/test ok", unsaved.body?.ok === true, JSON.stringify(unsaved.body));
+
+console.log("3c. authKind switch clears orphaned secrets (ADR 0001)");
+
+const pwSrv = await req("/ssh-hub/servers", "POST", {
+  name: "密码机", host: "192.0.2.1", port: 22, username: "ops",
+  authKind: "password", password: "SUPER_SECRET_PW_123",
+});
+const pwId = pwSrv.body?.server?.id;
+check("password server created", pwSrv.status === 200 && pwSrv.body?.server?.hasPassword === true);
+const toAgent = await req(`/ssh-hub/servers/${pwId}`, "PUT", {
+  host: "192.0.2.1", port: 22, username: "ops", authKind: "agent",
+});
+check("switch to agent clears hasPassword", toAgent.body?.server?.hasPassword === false, JSON.stringify(toAgent.body));
+const diskAfterAgent = await waitForDisk((c) => !c.includes("SUPER_SECRET_PW_123"));
+check("password gone from disk after switch", !diskAfterAgent.includes("SUPER_SECRET_PW_123"));
+
+// Same-kind regression, password variant: blank field keeps the secret.
+const pwKeep = await req(`/ssh-hub/servers/${pwId}`, "PUT", {
+  host: "192.0.2.1", port: 22, username: "ops", authKind: "password", password: "KEEP_ME_PW",
+});
+check("agent->password sets new password", pwKeep.body?.server?.hasPassword === true, JSON.stringify(pwKeep.body));
+const pwKeep2 = await req(`/ssh-hub/servers/${pwId}`, "PUT", {
+  name: "密码机-改", host: "192.0.2.1", port: 22, username: "ops", authKind: "password",
+});
+check("same-kind password PUT preserves flag", pwKeep2.body?.server?.hasPassword === true, JSON.stringify(pwKeep2.body));
+const diskPwKeep = await waitForDisk((c) => c.includes("密码机-改"));
+check("same-kind password PUT keeps secret on disk", diskPwKeep.includes("KEEP_ME_PW"));
+
+// Stale-secret resurrection: a legacy record holding an orphan password must
+// NOT revive it when switched privateKey -> password with a blank password.
+const legacy = await req("/ssh-hub/servers", "POST", {
+  name: "遗留机", host: "192.0.2.5", username: "ops",
+  authKind: "privateKey", privateKey: "LEGACY_PEM", password: "STALE_ORPHAN_PW",
+});
+const legacyId = legacy.body?.server?.id;
+const resurrect = await req(`/ssh-hub/servers/${legacyId}`, "PUT", {
+  host: "192.0.2.5", username: "ops", authKind: "password",
+  // password intentionally omitted — must NOT resurrect STALE_ORPHAN_PW
+});
+check("kind change with blank password does not resurrect stale secret", resurrect.body?.server?.hasPassword === false, JSON.stringify(resurrect.body));
+const diskResurrect = await waitForDisk((c) => !c.includes("LEGACY_PEM"));
+check("stale password + old key gone from disk", !diskResurrect.includes("STALE_ORPHAN_PW") && !diskResurrect.includes("LEGACY_PEM"));
+await req(`/ssh-hub/servers/${legacyId}`, "DELETE");
+
+const keySrv = await req("/ssh-hub/servers", "POST", {
+  name: "密钥机", host: "192.0.2.2", username: "ops",
+  authKind: "privateKey", privateKey: "FAKE_PEM_CONTENT", passphrase: "FAKE_PASSPHRASE",
+});
+const keyId = keySrv.body?.server?.id;
+const toPw = await req(`/ssh-hub/servers/${keyId}`, "PUT", {
+  host: "192.0.2.2", username: "ops", authKind: "password", password: "REPLACEMENT_PW",
+});
+check("switch to password clears hasPrivateKey", toPw.body?.server?.hasPrivateKey === false && toPw.body?.server?.hasPassword === true, JSON.stringify(toPw.body));
+const diskAfterKeySwitch = await waitForDisk((c) => !c.includes("FAKE_PEM_CONTENT"));
+check("key+passphrase gone from disk after switch", !diskAfterKeySwitch.includes("FAKE_PEM_CONTENT") && !diskAfterKeySwitch.includes("FAKE_PASSPHRASE"));
+
+const pw2 = await req("/ssh-hub/servers", "POST", {
+  name: "密码机2", host: "192.0.2.4", port: 22, username: "ops",
+  authKind: "password", password: "PW_TO_BE_CLEARED",
+});
+const pw2Id = pw2.body?.server?.id;
+const toKey = await req(`/ssh-hub/servers/${pw2Id}`, "PUT", {
+  host: "192.0.2.4", port: 22, username: "ops", authKind: "privateKey", privateKey: "NEW_PEM",
+});
+check("switch password->privateKey clears password", toKey.body?.server?.hasPassword === false && toKey.body?.server?.hasPrivateKey === true, JSON.stringify(toKey.body));
+const diskAfterPwKey = await waitForDisk((c) => !c.includes("PW_TO_BE_CLEARED"));
+check("old password gone from disk after pw->key switch", !diskAfterPwKey.includes("PW_TO_BE_CLEARED"));
+await req(`/ssh-hub/servers/${pw2Id}`, "DELETE");
+
+const noneSrv = await req("/ssh-hub/servers", "POST", {
+  name: "无认证机", host: "192.0.2.3", username: "ops",
+  authKind: "privateKey", privateKey: "NONE_PEM_CONTENT", passphrase: "NONE_PASSPHRASE",
+});
+const noneId = noneSrv.body?.server?.id;
+const toNone = await req(`/ssh-hub/servers/${noneId}`, "PUT", {
+  host: "192.0.2.3", username: "ops", authKind: "none",
+});
+check("switch to none clears key+passphrase flags", toNone.body?.server?.hasPrivateKey === false, JSON.stringify(toNone.body));
+const diskAfterNone = await waitForDisk((c) => !c.includes("NONE_PEM_CONTENT"));
+check("key+passphrase gone from disk after none switch", !diskAfterNone.includes("NONE_PEM_CONTENT") && !diskAfterNone.includes("NONE_PASSPHRASE"));
+
+await req(`/ssh-hub/servers/${pwId}`, "DELETE");
+await req(`/ssh-hub/servers/${keyId}`, "DELETE");
+await req(`/ssh-hub/servers/${noneId}`, "DELETE");
+
+console.log("3d. export");
+const exp = await req("/ssh-hub/servers/export");
+check("export returns version 1 + servers array", exp.status === 200 && exp.body?.version === 1 && Array.isArray(exp.body?.servers), JSON.stringify(exp.body).slice(0, 200));
+check("export contains no secret fields", exp.body?.servers?.every((s) => s.password === undefined && s.privateKey === undefined && s.passphrase === undefined));
+check("export body omits stored key path", !JSON.stringify(exp.body).includes(SSH_KEY));
+
+const crossExp = await fetch(base + "/ssh-hub/servers/export", { headers: { origin: "http://evil.example" } });
+check("cross-origin export rejected", crossExp.status === 403);
+const crossImp = await fetch(base + "/ssh-hub/servers/import", {
+  method: "POST",
+  headers: { origin: "http://evil.example", "content-type": "application/json" },
+  body: "[]",
+});
+check("cross-origin import rejected", crossImp.status === 403);
+
+console.log("3e. import");
+const beforeCount = (await req("/ssh-hub/servers")).body?.servers?.length ?? 0;
+const poisoned = JSON.parse(JSON.stringify(exp.body));
+for (const s of poisoned.servers) {
+  s.password = "INJECTED_SECRET";
+  s.hasPassword = true;
+}
+const imp = await req("/ssh-hub/servers/import", "POST", poisoned);
+check("import reports count", imp.status === 200 && imp.body?.imported === poisoned.servers.length, JSON.stringify(imp.body));
+const afterList = (await req("/ssh-hub/servers")).body?.servers ?? [];
+check("import adds entries", afterList.length === beforeCount + poisoned.servers.length, `before=${beforeCount} after=${afterList.length}`);
+const origIds = new Set(exp.body.servers.map((s) => s.id));
+const importedEntries = afterList.filter((s) => !origIds.has(s.id));
+check("import mints fresh ids", importedEntries.length === poisoned.servers.length && importedEntries.every((s) => typeof s.id === "string" && !origIds.has(s.id)));
+check("imported entries carry no secrets", importedEntries.every((s) => s.hasPassword === false && s.hasPrivateKey === false));
+const diskAfterImport = await waitForDisk((c) => importedEntries.every((s) => c.includes(s.id)));
+check("injected secrets never reached disk", !diskAfterImport.includes("INJECTED_SECRET"));
+for (const s of importedEntries) await req(`/ssh-hub/servers/${s.id}`, "DELETE");
+
+const badImp = await req("/ssh-hub/servers/import", "POST", { hello: 1 });
+check("malformed import -> 400", badImp.status === 400);
+const badVersion = await req("/ssh-hub/servers/import", "POST", { version: 99, servers: [] });
+check("unknown export version -> 400", badVersion.status === 400);
+const garbageEntry = await req("/ssh-hub/servers/import", "POST", { servers: [{}] });
+check("entry without host/username -> 400", garbageEntry.status === 400);
 
 console.log("4. terminal session over WebSocket");
 const sess = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });

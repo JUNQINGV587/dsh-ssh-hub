@@ -10,6 +10,8 @@
  *   PUT    /ssh-hub/servers/:id          update server
  *   DELETE /ssh-hub/servers/:id          remove server (kills its sessions)
  *   POST   /ssh-hub/servers/:id/test     one-shot connectivity test
+ *   GET    /ssh-hub/servers/export       secret-stripped export (version 1)
+ *   POST   /ssh-hub/servers/import       import (always creates new servers)
  *   GET    /ssh-hub/xterm.css            xterm stylesheet
  *   GET    /ssh-hub/sessions             list live SSH sessions
  *   POST   /ssh-hub/sessions             open a shell on a server
@@ -21,7 +23,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import type { ServerConfig, TerminalSession, TestResult } from "./types.js";
-import { ServerStore, resolveDshHome, serverFromInput, type ServerInput } from "./store.js";
+import { ServerStore, resolveDshHome, serverFromInput, SECRET_FIELDS, type ServerInput } from "./store.js";
 import { testConnection, createShellSession } from "./connection.js";
 
 const PREFIX = "/ssh-hub";
@@ -237,6 +239,43 @@ export function apply(ctx: any, _config: unknown) {
           json(res, 200, result);
           return;
         }
+        // GET /servers/export — every Server as a ServerView (secrets absent
+        // by construction) plus a format version. Literal paths MUST be
+        // matched before the /servers/:id regex below.
+        if (rest === "/servers/export" && method === "GET") {
+          json(res, 200, { version: 1, servers: store.list() });
+          return;
+        }
+        // POST /servers/import — always create, never overwrite (ADR 0001):
+        // fresh ids, incoming ids/timestamps/flags discarded, secret fields
+        // ignored even when present. Accepts { version, servers } or a bare
+        // array, mirroring the store's load tolerance.
+        if (rest === "/servers/import" && method === "POST") {
+          const body = await readBody(req);
+          const list = Array.isArray(body) ? body : body?.servers;
+          if (!Array.isArray(list)) {
+            json(res, 400, { error: "import body must be an array or { servers: [...] }" });
+            return;
+          }
+          if (!Array.isArray(body) && body?.version !== undefined && body.version !== 1) {
+            json(res, 400, { error: `unsupported export version: ${String(body.version)}` });
+            return;
+          }
+          for (const item of list) {
+            if (item === null || typeof item !== "object") {
+              json(res, 400, { error: "import entries must be objects" });
+              return;
+            }
+            const input = importInput(item);
+            if (input === undefined) {
+              json(res, 400, { error: "import entries must include a non-empty host and username" });
+              return;
+            }
+            store.upsert(input);
+          }
+          json(res, 200, { imported: list.length });
+          return;
+        }
 
         const serverMatch = rest.match(/^\/servers\/([^/]+)(?:\/(.*))?$/);
         if (serverMatch !== null) {
@@ -378,4 +417,22 @@ function validateInput(body: any): ServerInput {
   if (typeof body.keepaliveInterval === "number") clean.keepaliveInterval = body.keepaliveInterval;
   if (typeof body.strictHostKey === "boolean") clean.strictHostKey = body.strictHostKey;
   return clean;
+}
+
+/**
+ * Sanitize one import entry (ADR 0001): never trust incoming ids, timestamps,
+ * flags, or secret fields — the store re-mints everything. Returns undefined
+ * when the entry lacks the minimum identity (host + username).
+ */
+function importInput(item: unknown): ServerInput | undefined {
+  const input = validateInput(item);
+  delete input.id;
+  for (const field of SECRET_FIELDS) delete input[field];
+  if (
+    typeof input.host !== "string" || input.host.trim().length === 0 ||
+    typeof input.username !== "string" || input.username.trim().length === 0
+  ) {
+    return undefined;
+  }
+  return input;
 }
