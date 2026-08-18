@@ -2,15 +2,16 @@
 
 > Multi-server SSH terminal panel for the DeepSeek Harness (DSH) Web GUI.
 
-Manage a list of SSH servers and open **multiple interactive terminals at once** in a bottom panel — like a lightweight web-based multi-tab SSH client built into your DSH conversation.
-
+Manage a list of SSH servers and open **multiple interactive terminals at once** — a lightweight web-based multi-tab SSH client built into your DSH conversation. Terminals live in a **Dock** above the composer (taking honest layout space, never covering your conversation) and in a frame-wide **Focus View** for concentrated work, with a tiling **Grid** to watch several servers at once.
 
 ## Features
 
-- 🖥️ **Bottom terminal panel** in the DSH Web GUI, toggled with <kbd>Ctrl</kbd>+<kbd>`</kbd>
+- 🖥️ **Dock + Focus View**: the Dock is an in-flow workbench above the composer, toggled with <kbd>Ctrl</kbd>+<kbd>`</kbd>; the Focus View is a frame-wide surface covering the whole GUI, entered with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> (or the SSH 终端 button at the sidebar foot) and exited with <kbd>Esc</kbd>
 - 🔖 **Multiple tabs** — one SSH terminal per tab, switch freely, close with one click
+- 🗂️ **Grid with preset layouts** — single / left-right / top-bottom / 2×2 / one-large-two-small; pin tabs into Tiles to watch up to four servers at once (two in the Dock), drag Tiles to reorder, and let the Grid degrade back to the tab strip automatically when the window gets too small — sessions stay connected
+- ♻️ **Host-owned sessions** — collapsing the Dock, refreshing the page, or switching conversations never kills your shells; they reattach with recent output replayed, and idle sessions are reclaimed after 30 minutes without viewers
 - 🔑 **Four auth methods** per server: password, private key (with passphrase), SSH agent, or no-auth (local host keys)
-- 🖱️ **Drag to resize** the panel height; height and open/closed state persist across reloads
+- 🖱️ **Drag to resize** the Dock height; height and open/closed state persist across reloads
 - 🚀 **Connection testing** before saving a server (latency + auth check)
 - 🎨 **Theme-aware terminals**: the terminal follows the DSH GUI light/dark theme (falling back to the OS `prefers-color-scheme` when the theme service is absent), with a toolbar cycle button to pin **跟随界面 / 深色 / 浅色** (auto / dark / light) per browser. Open terminals hot-swap in place. Both palettes are held to WCAG contrast floors (foreground/background ≥ 7:1, ANSI colors ≥ 4.5:1) enforced in `npm test`
 - ⚙️ **Server Defaults settings card** (DSH ≥ 0.1.0-rc.7): set default ready timeout, keepalive interval, host-key verification, and terminal theme in 设置 → 插件 → 插件配置; servers that leave a field blank inherit the default (server field > Server Default > built-in constant)
@@ -52,7 +53,7 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 
 ## Usage
 
-1. Press <kbd>Ctrl</kbd>+<kbd>`</kbd> to open the terminal panel at the bottom of the conversation.
+1. Press <kbd>Ctrl</kbd>+<kbd>`</kbd> to open the terminal Dock above the composer. It takes real layout space — the conversation is pushed up, never covered.
 2. Click **管理服务器** (Manage servers) → **添加服务器** (Add server) and fill in:
 
    | Field | Description |
@@ -71,10 +72,13 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
    Use **测试连接** (Test) to verify before saving.
 
 3. Click **新会话** (New session) → pick a server → an SSH terminal opens in a new tab.
-4. Type, select-to-copy, right-click-to-paste. Drag the top edge of the panel to resize it.
-5. The terminal follows the GUI appearance. Want a different look for the terminal only? Click the **跟随界面 / 深色 / 浅色** button in the panel toolbar to cycle the theme; your choice is remembered per browser and applies to every open terminal instantly.
-6. On DSH ≥ 0.1.0-rc.7, open **设置 → 插件 → 插件配置 → SSH 服务器默认值** to set the defaults blank server fields inherit — including a default terminal theme used when a browser's override is **跟随界面**. The card's **管理服务器…** link jumps straight to the panel's server drawer.
-7. Moving to a new machine? Use **导出配置** (Export) / **导入配置** (Import) in the manage-servers dialog. The exported JSON contains **no secrets** — re-enter passwords/keys after importing. Import always adds entries as new servers and never overwrites existing ones.
+4. Type, select-to-copy, right-click-to-paste. Drag the top edge of the Dock to resize it.
+5. **Watch several servers at once**: click the 📌 pin button on a tab (or just click the tab) to pin it into a Grid Tile, then pick a layout with the **布局** button (single / left-right / top-bottom in the Dock; 2×2 and one-large-two-small in the Focus View). Drag Tiles to reorder; unpin with the ✕ on a Tile. When the window is too small, Tiles return to the tab strip automatically — sessions keep running.
+6. **Go focused**: press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd>, or click the **SSH 终端** button at the sidebar foot, to open the frame-wide Focus View with the full Grid. <kbd>Esc</kbd> returns to the conversation. The Focus View has the same toolbar as the Dock.
+7. **Your shells survive**: collapsing the Dock, refreshing the page, or switching conversations detaches the UI but the sessions keep running on the host, reattaching with recent output replayed. Closing a tab (or the ✕ on a Tile, then the tab's ✕) still ends that session; sessions with no viewers are reclaimed after 30 minutes.
+8. The terminal follows the GUI appearance. Want a different look for the terminal only? Click the **跟随界面 / 深色 / 浅色** button in the toolbar to cycle the theme; your choice is remembered per browser and applies to every open terminal instantly.
+9. On DSH ≥ 0.1.0-rc.7, open **设置 → 插件 → 插件配置 → SSH 服务器默认值** to set the defaults blank server fields inherit — including a default terminal theme used when a browser's override is **跟随界面**. The card's **管理服务器…** link jumps straight to the Dock's server drawer.
+10. Moving to a new machine? Use **导出配置** (Export) / **导入配置** (Import) in the manage-servers dialog. The exported JSON contains **no secrets** — re-enter passwords/keys after importing. Import always adds entries as new servers and never overwrites existing ones.
 
 ## Security notes
 
@@ -100,15 +104,15 @@ scripts/release.sh # tags HEAD, pushes, and creates the GitHub release
 
 ### How it works
 
-- **Host half** (`src/host/`) is a cordis plugin (`inject: ['webServer']`) exposing a REST API under `/ssh-hub` plus per-session WebSocket upgrade routes. SSH is driven by [`ssh2`](https://github.com/mscdex/ssh2).
-- **Client half** (`src/client/`) is a prebuilt React bundle rendered into the `conversation.input.dock` slot, using [`@xterm/xterm`](https://github.com/xtermjs/xterm.js) for the terminal emulator.
-- Session data flows: `xterm → ws → ssh2 stream → remote shell`, and back.
+- **Host half** (`src/host/`) is a cordis plugin (`inject: ['webServer']`) exposing a REST API under `/ssh-hub` plus per-session WebSocket upgrade routes. SSH is driven by [`ssh2`](https://github.com/mscdex/ssh2). Terminal Sessions are **host-owned**: they survive any client detaching, keep a bounded scrollback ring (replayed on reattach), and are reclaimed after 30 minutes without viewers (`src/host/registry.ts`, `src/host/scrollback.ts`). A single global **Grid** state (template + Tile→session pins) is served at `/ssh-hub/grid` and broadcast over `/ssh-hub/grid/events`, so every Dock and the Focus View converge on the same world.
+- **Client half** (`src/client/`) is a prebuilt React bundle: the Dock renders in the `conversation.input.dock` slot (in-flow, above the composer), the Focus View in the `shell.overlay` slot (frame-wide, root scope), and a sidebar entry in `sidebar.footer.action`. Terminals use [`@xterm/xterm`](https://github.com/xtermjs/xterm.js).
+- Session data flows: `xterm → ws → ssh2 stream → remote shell`, and back. Both surfaces can attach to the same sessions at once (multi-client broadcast).
 
 ### Integration tests
 
 `tests/integration.mjs` spins up a mock of the DSH server (HTTP + WS), applies the plugin, and drives a **real** SSH session against a test `sshd` (default `127.0.0.1:2222`, key auth). Override with `SSH_TEST_HOST`, `SSH_TEST_PORT`, `SSH_TEST_KEY`. See `scripts/setup-test-sshd.sh` for the CI-ready test daemon setup.
 
-`npm test` runs `scripts/check-contrast.mjs` first: both Terminal Theme variants (dark/light) are validated against the WCAG contrast floors (see `docs/adr/0002-adaptive-terminal-theme.md`).
+`npm test` runs `scripts/check-contrast.mjs` and `scripts/check-grid.mjs` first (Terminal Theme contrast floors — see `docs/adr/0002-adaptive-terminal-theme.md` — and the pure Grid module rules), then the integration suite.
 
 ## License
 

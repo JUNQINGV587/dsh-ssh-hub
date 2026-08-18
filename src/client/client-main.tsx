@@ -1272,12 +1272,19 @@ export function TerminalPanel(_props?: { sessionId?: string }) {
   /* ---- global Grid state (ADR-0005) ---- */
   const [grid, setGrid] = React.useState<GridState>({ template: "single", tiles: [null] });
   /** Optimistic local mutation + authoritative PUT; broadcasts from the host
-   *  (other surfaces, dead-session cleanup) overwrite via the ws below. */
+   *  (other surfaces, dead-session cleanup) overwrite via the ws below. A
+   *  failed PUT reverts to the host's state so a pin that did not stick is
+   *  visibly undone instead of silently diverging. */
   const commitGrid = React.useCallback((next: GridState) => {
     setGrid(next);
-    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) =>
-      console.error("[dsh-ssh-hub] grid PUT failed:", e),
-    );
+    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
+      console.error("[dsh-ssh-hub] grid PUT failed, reverting:", e);
+      api("/grid")
+        .then((b) => setGrid(b.grid ?? { template: "single", tiles: [null] }))
+        .catch(() => {
+          /* host unreachable; keep local state until the next push */
+        });
+    });
   }, []);
 
   // Load the global GridState and subscribe to pushes: one world, many
@@ -1914,9 +1921,14 @@ export function FocusView() {
   const visCount = gridSize.w > 0 ? fitCount(grid.template, gridSize.w, gridSize.h, 4) : 0;
   const commitGrid = React.useCallback((next: GridState) => {
     setGrid(next);
-    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) =>
-      console.error("[dsh-ssh-hub] grid PUT failed:", e),
-    );
+    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
+      console.error("[dsh-ssh-hub] grid PUT failed, reverting:", e);
+      api("/grid")
+        .then((b) => setGrid(b.grid ?? { template: "single", tiles: [null] }))
+        .catch(() => {
+          /* host unreachable; keep local state until the next push */
+        });
+    });
   }, []);
   const cycleTemplate = () => {
     const i = TEMPLATES.indexOf(grid.template);

@@ -1,0 +1,55 @@
+status: draft
+personas:
+  - id: solo-operator
+    name: 多机运维者
+    scenario: 同时管理多台服务器，常开 3-5 个终端监控，需要并排对照输出
+    goals:
+      - 同时盯住多台服务器的终端输出
+      - 折叠/切换对话时终端不丢
+      - 快速开新会话和管理服务器
+    key_paths:
+      - 开新会话
+      - 钉入网格并排监控
+      - 进入专注视图
+      - 折叠/展开面板
+    capability:
+      tech_literacy: high
+      device: desktop
+      network: stable
+      accessibility_needs: []
+    share: 0.5
+  - id: agent-driver
+    name: Agent 协作开发者
+    scenario: 让 DSH Agent 执行运维操作，自己一边聊一边盯终端输出
+    goals:
+      - 边看对话边盯终端
+      - 随时切到全屏专注终端
+      - 会话跨对话存活
+    key_paths:
+      - 边聊边盯终端
+      - Ctrl+Shift+` 进专注视图
+      - Esc 返回
+    capability:
+      tech_literacy: high
+      device: desktop
+      network: stable
+      accessibility_needs: []
+    share: 0.3
+  - id: occasional-ops
+    name: 低频运维者
+    scenario: 偶尔连一台服务器执行命令，不熟悉面板概念
+    goals:
+      - 快速连接服务器并执行命令
+      - 不被复杂布局吓到
+      - 出错时有明确提示
+    key_paths:
+      - 添加服务器
+      - 开新会话
+      - 关闭标签
+    capability:
+      tech_literacy: medium
+      device: desktop
+      network: stable
+      accessibility_needs: []
+    share: 0.2
+
