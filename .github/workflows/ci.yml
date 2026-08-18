@@ -32,6 +32,8 @@ jobs:
           chmod +x scripts/setup-test-sshd.sh
           sudo bash scripts/setup-test-sshd.sh &
           sleep 2
+          # the sshd runs as root; let the (non-root) test process read the key
+          sudo chmod 644 /tmp/dsh-multi-server-test-sshd/client_key
         env:
           SSH_TEST_PORT: 2222
 
