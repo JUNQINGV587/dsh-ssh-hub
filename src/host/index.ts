@@ -18,9 +18,9 @@
  *   POST   /ssh-hub/sessions             open a shell on a server
  *   DELETE /ssh-hub/sessions/:id         close a session
  *   WS     /ssh-hub/ws/:id               terminal stream (data + resize)
- *   GET    /ssh-hub/grid                 current global GridState
- *   PUT    /ssh-hub/grid                 replace the GridState (validated)
- *   WS     /ssh-hub/grid/events          GridState pushes (initial + broadcast)
+ *   GET    /ssh-hub/tree                current global workspace tree
+ *   PUT    /ssh-hub/tree                replace the tree (validated)
+ *   WS     /ssh-hub/tree/events         tree pushes (initial + broadcast)
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -30,17 +30,15 @@ import type { ServerConfig, ServerDefaults, TerminalSession, TestResult } from "
 import { ServerStore, resolveDshHome, serverFromInput, SECRET_FIELDS, type ServerInput } from "./store.js";
 import { testConnection, createShellSession } from "./connection.js";
 import { SessionRegistry } from "./registry.js";
-import { TEMPLATES, tileCount, normalizeTemplate } from "../shared/grid.mjs";
+import { newTree, normalizeTree, collectSessions } from "../shared/splittree.mjs";
 
 const PREFIX = "/ssh-hub";
 /** Default idle reclaim for a session with no attached clients (ADR-0004). */
 const DEFAULT_IDLE_RECLAIM_MS = 30 * 60 * 1000;
 
-/** The global Grid (ADR-0005): one Layout Template + one pin per Tile. */
-interface GridState {
-  template: string;
-  tiles: (string | null)[];
-}
+/**
+ * @typedef {import("../shared/splittree.mjs").TreeNode} TreeNode
+ */
 /** Schema defaults for the `ssh-hub` settings namespace (ADR 0003). */
 const DEFAULT_SERVER_DEFAULTS: ServerDefaults = {
   defaultReadyTimeoutSec: 15,
@@ -142,56 +140,57 @@ export function apply(ctx: any, config: any) {
   /** id -> per-session WS upgrade route disposer */
   const upgradeDisposers = new Map<string, () => void>();
 
-  /* ---- global Grid state (ADR-0005) ---- */
-  /** One global Grid: every Dock and the Focus View see the same world. */
-  let gridState: GridState = { template: "single", tiles: [null] };
-  /** Clients subscribed to grid/events. */
-  const gridClients = new Set<WebSocket>();
+  /* ---- global SplitTree state (ADR-0006) ---- */
+  /** One global workspace tree: window and full-screen are two viewports. */
+  let treeState: any = newTree(null);
+  /** Clients subscribed to tree/events. */
+  const treeClients = new Set<WebSocket>();
 
-  /** Validate a client-supplied GridState; unknown session pins are cleared
-   *  (the host is authoritative — a pin on a dead session is garbage). */
-  function sanitizeGrid(input: any): GridState | null {
-    if (input?.template !== undefined && !TEMPLATES.includes(input.template)) return null;
-    const template = normalizeTemplate(input?.template);
-    if (!Array.isArray(input?.tiles)) return null;
-    const expected = tileCount(template);
-    if (input.tiles.length !== expected) return null;
-    const tiles = input.tiles.map((t: any) => (typeof t === "string" ? t : null));
-    for (let i = 0; i < tiles.length; i++) {
-      if (tiles[i] !== null && registry.get(tiles[i]) === undefined) tiles[i] = null;
-    }
-    return { template, tiles };
+  /** Validate a client-supplied tree; dead-session leaves are emptied (the
+   *  host is authoritative — a leaf pointing at a gone session is garbage). */
+  function sanitizeTree(input: any) {
+    const tree = normalizeTree(input);
+    // collect leaves and clear those whose session is unknown
+    const walk = (node: any): any => {
+      if (node.kind === "leaf") {
+        const sessionId =
+          node.sessionId !== null && registry.get(node.sessionId) === undefined ? null : node.sessionId;
+        return { kind: "leaf", sessionId };
+      }
+      return { kind: "split", dir: node.dir, ratio: node.ratio, a: walk(node.a), b: walk(node.b) };
+    };
+    return walk(tree);
   }
 
-  function broadcastGrid() {
-    const payload = JSON.stringify(gridState);
-    for (const ws of gridClients) {
+  function broadcastTree() {
+    const payload = JSON.stringify(treeState);
+    for (const ws of treeClients) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
     }
   }
 
-  /** A session left the registry: drop its pins and tell every surface. */
-  function clearSessionPins(id: string) {
-    let changed = false;
-    const tiles = gridState.tiles.map((t) => {
-      if (t === id) {
-        changed = true;
-        return null;
+  /** A session left the registry: empty its leaves and tell every surface. */
+  function clearSessionFromTree(id: string) {
+    const walk = (node: any): any => {
+      if (node.kind === "leaf") {
+        if (node.sessionId === id) return { kind: "leaf", sessionId: null };
+        return node;
       }
-      return t;
-    });
-    if (changed) {
-      gridState = { ...gridState, tiles };
-      broadcastGrid();
+      return { ...node, a: walk(node.a), b: walk(node.b) };
+    };
+    const next = walk(treeState);
+    if (JSON.stringify(next) !== JSON.stringify(treeState)) {
+      treeState = next;
+      broadcastTree();
     }
   }
 
   // Reclaim disposes the session's WS upgrade route along with the session,
-  // and clears any Grid pins pointing at it.
+  // and empties any tree leaves pointing at it (the block stays).
   registry.onReclaim((id) => {
     upgradeDisposers.get(id)?.();
     upgradeDisposers.delete(id);
-    clearSessionPins(id);
+    clearSessionFromTree(id);
   });
 
   /** Unpredictable session id: readable counter prefix + crypto-random suffix. */
@@ -312,10 +311,10 @@ export function apply(ctx: any, config: any) {
     );
   }
 
-  /** Grid-state event channel: every surface subscribes and converges on the
-   *  broadcast GridState (ADR-0005). */
-  const gridEventsDispose = webServer.registerUpgrade({
-    path: PREFIX + "/grid/events",
+  /** Tree-state event channel: every surface subscribes and converges on the
+   *  broadcast workspace tree (ADR-0006). */
+  const treeEventsDispose = webServer.registerUpgrade({
+    path: PREFIX + "/tree/events",
     handler(req: any, socket: any, head: Buffer) {
       if (!sameOrigin(req)) {
         socket.destroy();
@@ -323,14 +322,14 @@ export function apply(ctx: any, config: any) {
       }
       const wss = new WebSocketServer({ noServer: true });
       wss.on("connection", (ws) => {
-        gridClients.add(ws);
+        treeClients.add(ws);
         // Defer the initial state like the session replay: frames written
         // synchronously inside the connection event are dropped by ws.
         setImmediate(() => {
-          if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(gridState));
+          if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(treeState));
         });
         ws.on("close", () => {
-          gridClients.delete(ws);
+          treeClients.delete(ws);
         });
       });
       wss.on("error", () => socket.destroy());
@@ -497,21 +496,17 @@ export function apply(ctx: any, config: any) {
           return;
         }
 
-        // ---- global Grid state (ADR-0005) ----
-        if (rest === "/grid" && method === "GET") {
-          json(res, 200, { grid: gridState });
+        // ---- global SplitTree state (ADR-0006) ----
+        if (rest === "/tree" && method === "GET") {
+          json(res, 200, { tree: treeState });
           return;
         }
-        if (rest === "/grid" && method === "PUT") {
+        if (rest === "/tree" && method === "PUT") {
           const body = await readBody(req);
-          const clean = sanitizeGrid(body);
-          if (clean === null) {
-            json(res, 400, { error: "invalid grid state: template must be one of " + TEMPLATES.join(",") + " and tiles must match its count" });
-            return;
-          }
-          gridState = clean;
-          broadcastGrid();
-          json(res, 200, { grid: gridState });
+          const clean = sanitizeTree(body);
+          treeState = clean;
+          broadcastTree();
+          json(res, 200, { tree: treeState });
           return;
         }
 
@@ -576,15 +571,15 @@ export function apply(ctx: any, config: any) {
   ctx.effect(() => {
     return () => {
       disposeRoute();
-      gridEventsDispose();
-      for (const ws of gridClients) {
+      treeEventsDispose();
+      for (const ws of treeClients) {
         try {
           ws.close();
         } catch {
           /* ignore */
         }
       }
-      gridClients.clear();
+      treeClients.clear();
       // clearAll kills and forgets every session; forget() disposes the
       // per-session upgrade routes through the reclaim hook.
       registry.clearAll();

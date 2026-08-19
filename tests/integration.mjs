@@ -550,40 +550,42 @@ check("explicitly closed session gone", !afterDel.body?.sessions?.some((s) => s.
 const delAgain = await req(`/ssh-hub/sessions/${sessionId2}`, "DELETE");
 check("DELETE missing -> 404", delAgain.status === 404);
 
-console.log("4d. global grid state (ADR-0005)");
-const g0 = await req("/ssh-hub/grid");
+console.log("4d. global workspace tree (ADR-0006)");
+const tree0 = await req("/ssh-hub/tree");
 check(
-  "GET /grid starts single with one empty tile",
-  g0.body?.grid?.template === "single" && Array.isArray(g0.body?.grid?.tiles) && g0.body?.grid?.tiles.length === 1 && g0.body?.grid?.tiles[0] === null,
-  JSON.stringify(g0.body),
+  "GET /tree starts as one empty leaf",
+  tree0.body?.tree?.kind === "leaf" && tree0.body?.tree?.sessionId === null,
+  JSON.stringify(tree0.body),
 );
 
 const gsess = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
 const gsid = gsess.body?.id;
-check("grid fixture session opened", typeof gsid === "string");
+check("tree fixture session opened", typeof gsid === "string");
 
-const gp = await req("/ssh-hub/grid", "PUT", { template: "split-h", tiles: [gsid, null] });
+// PUT a horizontal split: A left, empty block right.
+const splitTree = { kind: "split", dir: "h", ratio: 0.5, a: { kind: "leaf", sessionId: gsid }, b: { kind: "leaf", sessionId: null } };
+const tp = await req("/ssh-hub/tree", "PUT", splitTree);
 check(
-  "PUT /grid saves template and pins",
-  gp.body?.grid?.template === "split-h" && gp.body?.grid?.tiles?.[0] === gsid && gp.body?.grid?.tiles?.[1] === null,
-  JSON.stringify(gp.body),
+  "PUT /tree saves the split tree",
+  tp.body?.tree?.kind === "split" && tp.body?.tree?.dir === "h" && tp.body?.tree?.a?.sessionId === gsid && tp.body?.tree?.b?.sessionId === null,
+  JSON.stringify(tp.body),
 );
-const g1 = await req("/ssh-hub/grid");
-check("GET /grid returns saved state", g1.body?.grid?.template === "split-h" && g1.body?.grid?.tiles?.[0] === gsid, JSON.stringify(g1.body));
+const tree1 = await req("/ssh-hub/tree");
+check("GET /tree returns saved state", tree1.body?.tree?.kind === "split" && tree1.body?.tree?.a?.sessionId === gsid, JSON.stringify(tree1.body));
 
-const gbad = await req("/ssh-hub/grid", "PUT", { template: "banana", tiles: [] });
-check("PUT /grid rejects unknown template", gbad.status === 400);
-const glen = await req("/ssh-hub/grid", "PUT", { template: "grid-4", tiles: [gsid] });
-check("PUT /grid rejects wrong tile count", glen.status === 400);
-const gdead = await req("/ssh-hub/grid", "PUT", { template: "split-h", tiles: ["ghost-session", gsid] });
-check("PUT /grid clears unknown session pins", gdead.body?.grid?.tiles?.[0] === null && gdead.body?.grid?.tiles?.[1] === gsid, JSON.stringify(gdead.body));
+// Unknown sessions in leaves are emptied (host authoritative), and garbage
+// shapes are repaired rather than rejected.
+const gdead = await req("/ssh-hub/tree", "PUT", { kind: "split", dir: "h", ratio: 0.5, a: { kind: "leaf", sessionId: "ghost-session" }, b: { kind: "leaf", sessionId: gsid } });
+check("PUT /tree empties unknown session leaves", gdead.body?.tree?.a?.sessionId === null && gdead.body?.tree?.b?.sessionId === gsid, JSON.stringify(gdead.body));
+const gbad = await req("/ssh-hub/tree", "PUT", { kind: "banana" });
+check("PUT /tree repairs garbage into an empty leaf", gbad.status === 200 && gbad.body?.tree?.kind === "leaf" && gbad.body?.tree?.sessionId === null, JSON.stringify(gbad.body));
 
 // ws broadcast: connect, then PUT, expect the new state pushed.
-const gws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/grid/events`);
-const gridEvents = [];
-gws.on("message", (d) => gridEvents.push(JSON.parse(String(d))));
+const gws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/tree/events`);
+const treeEvents = [];
+gws.on("message", (d) => treeEvents.push(JSON.parse(String(d))));
 await new Promise((res, rej) => {
-  const t = setTimeout(() => rej(new Error("grid ws open timeout")), 5000);
+  const t = setTimeout(() => rej(new Error("tree ws open timeout")), 5000);
   gws.on("open", () => {
     clearTimeout(t);
     res();
@@ -594,17 +596,17 @@ await new Promise((res, rej) => {
   });
 });
 await new Promise((r) => setTimeout(r, 300));
-check("grid ws receives initial state", gridEvents.length >= 1 && gridEvents[0]?.template === "split-h", JSON.stringify(gridEvents));
-await req("/ssh-hub/grid", "PUT", { template: "single", tiles: [gsid] });
+check("tree ws receives initial state", treeEvents.length >= 1 && treeEvents[0]?.kind === "leaf" && treeEvents[0]?.sessionId === null, JSON.stringify(treeEvents));
+await req("/ssh-hub/tree", "PUT", { kind: "leaf", sessionId: gsid });
 await new Promise((r) => setTimeout(r, 300));
-check("grid ws receives broadcast after PUT", gridEvents.some((e) => e?.template === "single"), JSON.stringify(gridEvents));
+check("tree ws receives broadcast after PUT", treeEvents.some((e) => e?.sessionId === gsid), JSON.stringify(treeEvents));
 gws.close();
 
-// Killing the pinned session clears its pins (registry reclaim hook).
+// Killing the session empties its leaf (the block stays) via the reclaim hook.
 const gdel = await req(`/ssh-hub/sessions/${gsid}`, "DELETE");
-check("grid fixture session deleted", gdel.body?.ok === true);
-const g2 = await req("/ssh-hub/grid");
-check("deleting a session clears its pins", g2.body?.grid?.tiles?.[0] === null, JSON.stringify(g2.body));
+check("tree fixture session deleted", gdel.body?.ok === true);
+const g2 = await req("/ssh-hub/tree");
+check("deleting a session empties its leaf", g2.body?.tree?.kind === "leaf" && g2.body?.tree?.sessionId === null, JSON.stringify(g2.body));
 
 console.log("4e. unattached sessions are reclaimed too");
 // A session that never had a WebSocket attached must still hit the idle
