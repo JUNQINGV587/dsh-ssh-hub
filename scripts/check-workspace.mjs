@@ -11,6 +11,7 @@
  */
 import {
   defaultCollection,
+  setActiveTree,
   normalizeCollection,
   createWorkspace,
   removeWorkspace,
@@ -90,6 +91,8 @@ check("removeTab returns the removed tab", t4.workspaces[0].tabs.length === 1 &&
 const t5 = setActiveWorkspace(d0, 0);
 check("setActiveWorkspace", t5.activeWorkspace === 0);
 check("activeTree returns the active tab's tree", activeTree(d0).kind === "leaf" && activeTree(d0).sessionId === null);
+const st = setActiveTree(d0, { kind: "leaf", sessionId: "S" });
+check("setActiveTree replaces the active tab's tree", activeTree(st).sessionId === "S" && st.workspaces[0].tabs[0].tree.sessionId === "S");
 
 console.log("6. session cleanup is global across workspaces and tabs");
 const multi = normalizeCollection({

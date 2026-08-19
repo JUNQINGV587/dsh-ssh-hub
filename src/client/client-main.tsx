@@ -24,11 +24,24 @@ import {
   setSession as treeSetSession,
   swapSessions as treeSwapSessions,
   setRatio as treeSetRatio,
-  canSplit,
-  collectSessions,
+  collectSessions as collectTreeSessions,
   findPath,
-  normalizeTree,
 } from "../shared/splittree.mjs";
+import {
+  defaultCollection,
+  activeTree,
+  setActiveTree,
+  createWorkspace,
+  removeWorkspace,
+  renameWorkspace,
+  setWorkspaceMeta,
+  addTab,
+  removeTab,
+  renameTab,
+  setActiveTab,
+  setActiveWorkspace,
+  collectSessions as collectAllSessions,
+} from "../shared/workspace.mjs";
 /* Settings card + the shared bound settings scope (rc.7 settings.plugin.item).
  * getSettingsScope is imported for module-internal use (the theme chain);
  * SettingsCard/setSettingsScope are re-exported for the build.mjs wrapper. */
@@ -194,6 +207,37 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsWinBody{flex:1;min-height:0;position:relative;background:var(--dmst-bg,#1e2128)}
 .dmsWinResize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:9}
 .dmsWinResize:after{content:'';position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid var(--dsw-alias-label-tertiary);border-bottom:2px solid var(--dsw-alias-label-tertiary);border-radius:1px;opacity:.6}
+
+/* Tab bar + workspace switcher (Wave-style, ADR-0007) */
+.dmsWinTabs{flex:none;display:flex;align-items:center;gap:4px;padding:4px 8px 0;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip);position:relative}
+.dmsWsBtn{flex:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:600;cursor:pointer}
+.dmsWsBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsTabList{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;scrollbar-width:none}
+.dmsTabList::-webkit-scrollbar{display:none}
+.dmsTab{flex:none;display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 10px;border-radius:7px 7px 0 0;border:1px solid transparent;border-bottom:none;color:var(--dsw-alias-label-tertiary);font-size:12px;max-width:180px;cursor:default}
+.dmsTab:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsTab.isActive{background:var(--dms-bg,#1e2128);border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary)}
+.dmsTabName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;border:none;color:inherit;font:inherit;cursor:pointer;padding:0}
+.dmsTabEdit{width:120px;height:22px;border:1px solid var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));border-radius:5px;background:var(--dsw-bg-input,transparent);color:var(--dsw-alias-label-primary);font:inherit;padding:0 6px;outline:none}
+.dmsTabX{flex:none;width:18px;height:18px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;opacity:0}
+.dmsTab:hover .dmsTabX,.dmsTab.isActive .dmsTabX{opacity:.7}
+.dmsTabX:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover)}
+.dmsTabAdd{flex:none;width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;display:grid;place-items:center;padding:0}
+.dmsTabAdd:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsWsSwitcher{position:absolute;left:8px;top:34px;z-index:12;width:280px;display:flex;flex-direction:column;background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 10px 32px rgba(0,0,0,.45);padding:6px;overflow:hidden}
+.dmsWsTitle{flex:none;padding:4px 8px 6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary)}
+.dmsWsRow{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer}
+.dmsWsRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsWsRow.isActive{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsWsDot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dmsWsName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--dsw-alias-label-secondary)}
+.dmsWsActs{flex:none;display:flex;gap:2px;opacity:0}
+.dmsWsRow:hover .dmsWsActs{opacity:1}
+.dmsWsAct{width:22px;height:22px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;font-size:12px}
+.dmsWsAct:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsWsFoot{flex:none;display:flex;gap:6px;padding:6px 2px 2px;border-top:1px solid var(--dsw-alias-border-l1);margin-top:4px}
+.dmsWsNew{flex:1;height:26px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:7px;font-family:Inter,var(--dsw-font-family);font-size:11.5px;cursor:pointer}
+.dmsWsNew:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 
 /* Split tree */
 .dmsSplit{position:relative;display:flex;min-width:0;min-height:0;height:100%}
@@ -1090,29 +1134,29 @@ function ServerDrawer({
 
 /* ---------------- workspace tree (ADR-0006) ---------------- */
 
-/** The global workspace tree: the floating window and the full-screen view
- *  are two viewports over the same tree (host-authoritative, pushed via
- *  /tree/events). */
-function useTreeState(enabled: boolean) {
-  const [tree, setTree] = React.useState<any>({ kind: "leaf", sessionId: null });
+/** The global workspace collection (ADR-0007): the floating window and the
+ *  full-screen view are viewports over the active (workspace, tab) tree,
+ *  host-authoritative and pushed via /workspace/events. */
+function useWorkspaceState(enabled: boolean) {
+  const [collection, setCollection] = React.useState<any>(defaultCollection());
   React.useEffect(() => {
     if (!enabled) return;
     let ws: WebSocket | null = null;
     let cancelled = false;
-    api("/tree")
+    api("/workspace")
       .then((b) => {
-        if (!cancelled) setTree(b.tree ?? { kind: "leaf", sessionId: null });
+        if (!cancelled) setCollection(b.workspace ?? defaultCollection());
       })
       .catch(() => {
-        /* older host: no tree route — keep the local default */
+        /* older host: no workspace route — keep the local default */
       });
     try {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(proto + "//" + location.host + PREFIX + "/tree/events");
+      ws = new WebSocket(proto + "//" + location.host + PREFIX + "/workspace/events");
       ws.onmessage = (ev) => {
         if (typeof ev.data !== "string" || cancelled) return;
         try {
-          setTree(JSON.parse(ev.data));
+          setCollection(JSON.parse(ev.data));
         } catch {
           /* ignore malformed push */
         }
@@ -1125,18 +1169,18 @@ function useTreeState(enabled: boolean) {
       ws?.close();
     };
   }, [enabled]);
-  const commitTree = React.useCallback((next: any) => {
-    setTree(next);
-    api("/tree", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
-      console.error("[dsh-ssh-hub] tree PUT failed, reverting:", e);
-      api("/tree")
-        .then((b) => setTree(b.tree ?? { kind: "leaf", sessionId: null }))
+  const commit = React.useCallback((next: any) => {
+    setCollection(next);
+    api("/workspace", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
+      console.error("[dsh-ssh-hub] workspace PUT failed, reverting:", e);
+      api("/workspace")
+        .then((b) => setCollection(b.workspace ?? defaultCollection()))
         .catch(() => {
           /* host unreachable; keep local state until the next push */
         });
     });
   }, []);
-  return { tree, commitTree };
+  return { collection, commit };
 }
 
 /** Frame-wide visibility of the terminal window (ADR-0006). */
@@ -1618,19 +1662,19 @@ function saveWin(v: { x: number; y: number; w: number; h: number }) {
   }
 }
 
-/** The unplaced-session list: sessions not currently in the tree. */
+/** The unplaced-session list: sessions not currently in any workspace tab. */
 function SessionListPanel({
-  tree,
+  collection,
   tabs,
   onPlace,
   onClose,
 }: {
-  tree: any;
+  collection: any;
   tabs: TermTab[];
   onPlace: (sessionId: string) => void;
   onClose: () => void;
 }) {
-  const inTree = new Set(collectSessions(tree));
+  const inTree = new Set(collectAllSessions(collection));
   const unplaced = tabs.filter((t) => !inTree.has(t.id));
   return (
     <div className="dmsListPanel">
@@ -1669,7 +1713,15 @@ function SessionListPanel({
 export function TerminalWindow() {
   const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
   const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
-  const { tree, commitTree } = useTreeState(visible);
+  const { collection, commit } = useWorkspaceState(visible);
+  /** The active (workspace, tab) tree and a commit that writes it back. */
+  const tree = activeTree(collection);
+  const commitTree = React.useCallback(
+    (nextTree: any) => commit(setActiveTree(collection, nextTree)),
+    [collection, commit],
+  );
+  const [wsOpen, setWsOpen] = React.useState(false);
+  const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
 
   const [tabs, setTabs] = React.useState<TermTab[]>([]);
@@ -1806,17 +1858,77 @@ export function TerminalWindow() {
     };
   }, [drag, tree, commitTree]);
 
-  /* ---- Esc: exit maximized first, then close the window ---- */
+  /* ---- keyboard: Esc (maximized then close), plus basic Wave bindings.
+   * Hardcoded here; the full configurable preset lands in T4. ---- */
   React.useEffect(() => {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (getTerminalMaximized()) setTerminalMaximized(false);
-      else setTerminalVisible(false);
+      if (e.key === "Escape") {
+        if (getTerminalMaximized()) setTerminalMaximized(false);
+        else setTerminalVisible(false);
+        return;
+      }
+      const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+      const altShift = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
+      if (alt && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        newTab();
+        return;
+      }
+      if (altShift && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        closeTabAt(ws.activeTab ?? 0);
+        return;
+      }
+      if (alt && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        if (activePath !== null) removeBlockAt(activePath);
+        return;
+      }
+      if (e.key === "F2") {
+        e.preventDefault();
+        setRenaming({ tab: ws.activeTab ?? 0, text: ws.tabs[ws.activeTab ?? 0]?.name ?? "" });
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, collection, tree, activePath]);
+
+  /* ---- workspace + tab operations ---- */
+  const wsIdx = collection.activeWorkspace;
+  const ws = collection.workspaces[wsIdx] ?? collection.workspaces[0];
+  const newTab = () => commit(addTab(collection, wsIdx));
+  const closeTabAt = (tabIdx: number) => {
+    const [next] = removeTab(collection, wsIdx, tabIdx);
+    commit(next);
+  };
+  const doRenameTab = (tabIdx: number, name: string) => {
+    commit(renameTab(collection, wsIdx, tabIdx, name));
+    setRenaming(null);
+  };
+  const switchWorkspace = (idx: number) => {
+    commit(setActiveWorkspace(collection, idx));
+    setWsOpen(false);
+  };
+  const newWorkspace = (copy: boolean) => {
+    const name = copy ? "复制布局" : "新工作区";
+    const opts = copy ? { name, copyFrom: wsIdx } : { name };
+    commit(createWorkspace(collection, opts));
+    setWsOpen(false);
+  };
+  const deleteWorkspaceAt = (idx: number) => {
+    commit(removeWorkspace(collection, idx));
+    setWsOpen(false);
+  };
+  const renameWsAt = (idx: number) => {
+    const name = window.prompt("工作区名称", collection.workspaces[idx]?.name ?? "");
+    if (name !== null && name.trim().length > 0) commit(renameWorkspace(collection, idx, name.trim()));
+  };
+  const removeBlockAt = (path: number[]) => {
+    const [next] = treeRemoveLeaf(tree, path);
+    commitTree(next ?? newTree(null));
+  };
 
   /* ---- window chrome: move (clamped) / resize / maximize ---- */
   const startMove = (e: React.PointerEvent) => {
@@ -1964,7 +2076,7 @@ export function TerminalWindow() {
 
   if (!visible && !closing) return null;
 
-  const placedCount = collectSessions(tree).length;
+  const placedCount = collectAllSessions(collection).length;
   const stateLabel =
     tabs.length === 0
       ? servers.length === 0
@@ -1991,6 +2103,104 @@ export function TerminalWindow() {
             {Icon.close()}
           </button>
         </span>
+      </div>
+      <div className="dmsWinTabs">
+        <button className="dmsWsBtn" title="工作区" aria-label="工作区" onClick={() => setWsOpen((v) => !v)}>
+          {Icon.terminal()} {ws.name}
+        </button>
+        <div className="dmsTabList" role="tablist">
+          {ws.tabs.map((t, i) => (
+            <span
+              key={i}
+              className={"dmsTab" + (i === ws.activeTab ? " isActive" : "")}
+              onDoubleClick={() => setRenaming({ tab: i, text: t.name })}
+            >
+              {renaming !== null && renaming.tab === i ? (
+                <input
+                  className="dmsTabEdit"
+                  autoFocus
+                  value={renaming.text}
+                  onChange={(e) => setRenaming({ ...renaming, text: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") doRenameTab(i, renaming.text.trim() || t.name);
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <button
+                  className="dmsTabName"
+                  role="tab"
+                  aria-selected={i === ws.activeTab}
+                  onClick={() => commit(setActiveTab(collection, wsIdx, i))}
+                >
+                  {t.name}
+                </button>
+              )}
+              <button
+                className="dmsTabX"
+                title="关闭标签页（Alt+Shift+w）"
+                aria-label="关闭标签页"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTabAt(i);
+                }}
+              >
+                {Icon.close()}
+              </button>
+            </span>
+          ))}
+        </div>
+        <button className="dmsTabAdd" title="新标签页（Alt+t）" aria-label="新标签页" onClick={newTab}>
+          {Icon.plus()}
+        </button>
+        {wsOpen && (
+          <div className="dmsWsSwitcher">
+            <div className="dmsWsTitle">工作区</div>
+            {collection.workspaces.map((w, i) => (
+              <div
+                key={i}
+                className={"dmsWsRow" + (i === wsIdx ? " isActive" : "")}
+                onClick={() => switchWorkspace(i)}
+              >
+                <span className="dmsWsDot" style={w.color ? { background: w.color } : undefined} />
+                <span className="dmsWsName">{w.name}</span>
+                <span className="dmsWsActs">
+                  <button
+                    className="dmsWsAct"
+                    title="重命名"
+                    aria-label="重命名工作区"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      renameWsAt(i);
+                    }}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="dmsWsAct"
+                    title="删除工作区（仅布局，会话保留）"
+                    aria-label="删除工作区"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteWorkspaceAt(i);
+                    }}
+                  >
+                    {Icon.trash()}
+                  </button>
+                </span>
+              </div>
+            ))}
+            <div className="dmsWsFoot">
+              <button className="dmsWsNew" onClick={() => newWorkspace(false)}>
+                {Icon.plus()} 新建（空模板）
+              </button>
+              <button className="dmsWsNew" onClick={() => newWorkspace(true)}>
+                复制当前布局
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <div className="dmsWinTool">
         <button className="dmsToolBtn" disabled={servers.length === 0 || busy} onClick={() => setPicker((v) => !v)}>
@@ -2034,7 +2244,7 @@ export function TerminalWindow() {
         />
         {listOpen && (
           <SessionListPanel
-            tree={tree}
+            collection={collection}
             tabs={tabs}
             onPlace={(id) => placeInto(id)}
             onClose={() => setListOpen(false)}

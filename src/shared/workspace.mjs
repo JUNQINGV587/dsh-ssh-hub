@@ -160,6 +160,19 @@ export function setActiveTab(collection, wsIdx, tabIdx) {
   return { ...collection, workspaces };
 }
 
+/** Replace the SplitTree of the active (workspace, tab). */
+export function setActiveTree(collection, tree) {
+  const ws = collection.workspaces[collection.activeWorkspace];
+  if (ws === undefined || ws.tabs.length === 0) return collection;
+  const tabIdx = Math.min(ws.activeTab, ws.tabs.length - 1);
+  const workspaces = collection.workspaces.map((w, i) =>
+    i === collection.activeWorkspace
+      ? { ...w, tabs: w.tabs.map((t, j) => (j === tabIdx ? { ...t, tree } : t)) }
+      : w,
+  );
+  return { ...collection, workspaces };
+}
+
 /** The SplitTree of the active (workspace, tab). */
 export function activeTree(collection) {
   const ws = collection.workspaces[collection.activeWorkspace];
