@@ -8,9 +8,10 @@
 ## 实施状态（2026-08 一轮）
 
 - ✅ **U-1~U-5 已实现**（commit：一级 UX 修复，含 host `/sessions` 新增 `lastDetachedAt`/`reclaimAfterMs`、设置卡新增「会话回收时长」、RightSidebar 会话面板、新建组合/加入当前、Esc 逐级退出、错误分类错误面、WS 自动重连、关标签 toast、后台会话计数）。
-- ✅ **#42 部分认领**：CONTEXT.md 术语表已更新到 flat 模型（Tab=一个会话、新增 Workspace 条目、删除 Layout Tree），README 中英文已修正漂移（新 ADR / 删遗留文件 / 完整重写留给 #42）。
-- 🔄 **U-6 / U-8 / U-9 / U-16 已开 ready-for-agent issue**（见 GitHub）。
-- ⏳ 其余 U-10~U-29 留在本文档作为 backlog。
+- ✅ **UX-0001/0002/0003（状态点/活动指示/回收可见性）+ U-8 布局恢复 已实现**（commit b5deff6，关闭 #43/#44）。
+- ✅ **U-9 键盘契约 + U-16 广播 已实现**（commit ef0334c，关闭 #45/#46）：聚焦成员（点击块/Alt+1-9，强调描边），Alt+w 只移除聚焦成员、Alt+Shift+w 解散组合、Alt+m 放大聚焦成员；组合视图广播按钮 → 多选成员 → 输入一次发送到所选，接收端闪烁。死绑定 splitH/splitV 已移除。
+- ✅ **#42 部分认领**：CONTEXT.md 术语表已更新到 flat 模型（Tab=一个会话、新增 Workspace 条目、删除 Layout Tree），README 中英文已修正漂移。
+- ⏳ 其余 U-10~U-29 留在本文档作为 backlog（含 #41 拖放、#42 新 ADR + 删遗留文件 + README 完整重写）。
 
 ---
 
