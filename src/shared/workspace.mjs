@@ -22,7 +22,7 @@ export function newTree() {
 /**
  * @typedef {Object} TabState
  * @property {string} name
- * @property {import("./splittree.mjs").TreeNode} tree
+ * @property {import("./layout.mjs").TreeNode} tree
  *
  * @typedef {Object} WorkspaceState
  * @property {string} name

@@ -45,12 +45,12 @@ One split tree of Blocks inside a Workspace, with its own name. The active Tab i
 _Avoid_: pane, block (a Block is inside a Tab), page
 
 **Block**:
-One pane of the Workspace holding exactly one Terminal Session (or an empty slot). Blocks are arranged by recursive binary splits; a block can be split in four directions, its divider dragged, and its session dragged onto another block to swap (centre) or open a new pane (edge, RGB-coded direction preview).
+One pane of the layout holding exactly one Terminal Session (or an empty slot). Blocks live in same-direction lists inside a Tab's layout tree; dragging a block onto another offers 7 Wave drop targets (inline before/after, out-of-line inner/outer, swap) shown as green placeholders; margins resize blocks.
 _Avoid_: pane, tile, split, cell
 
-**Split Tree**:
-The recursive binary tree of Blocks inside one Tab: a Leaf holds one session (or is empty), a Split has a direction (`h` left/right, `v` top/bottom) and a draggable ratio. A Block can be magnified to fill the window (a subtree view whose edits write back at its path).
-_Avoid_: grid, layout template, tiling
+**Layout Tree**:
+The flexbox n-tree inside one Tab: a node is a Block or an ordered same-direction list; levels alternate row/column; node sizes are unitless and their sibling ratio decides displacement. New sessions auto-place into the first row (wrapping after five); removing a block compresses depth. A Block can be magnified to fill the window (a subtree view whose edits write back at its path).
+_Avoid_: grid, layout template, tiling, split tree
 
 **Unplaced List**:
 Sessions not currently in the Workspace (never placed, or removed from a Block). A session returns here when its Block is removed; it keeps running until the host reclaims it (ADR-0004).
