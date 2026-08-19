@@ -330,6 +330,10 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsWsMember.isDropswap{box-shadow:0 0 0 2px var(--wave-accent,#58c142)}
 .dmsTab.isDropTarget{border-color:var(--wave-accent,#58c142);color:var(--wave-fg)}
 
+/* U-18: per-server color bar on tabs / dot in badges and panel rows. */
+.dmsTab{border-left:3px solid transparent}
+.dmsColorDot{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block;margin-right:6px;vertical-align:middle}
+
 /* Esc exit hint: persistent while magnified or maximized (U-4). */
 .dmsEscHint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;box-shadow:0 4px 14px rgba(0,0,0,.3);backdrop-filter:blur(4px)}
 .dmsWin.isLight .dmsEscHint{background:rgba(255,255,255,.85);color:#222;box-shadow:0 4px 14px rgba(0,0,0,.18)}
@@ -485,9 +489,26 @@ async function api(path: string, opts?: RequestInit) {
   return body;
 }
 
+/** U-18: stable per-server color dot, so sessions on one server read as one
+ *  family across the tab strip, member badges and the sessions panel. */
+const SERVER_COLORS = ["#58c142", "#4c8dff", "#e8b339", "#e74856", "#c07bf0", "#2eb8c1", "#e87ba0", "#9aa0a6"];
+function serverColor(serverId: string): string {
+  let h = 0;
+  for (let i = 0; i < serverId.length; i++) h = (h * 31 + serverId.charCodeAt(i)) >>> 0;
+  return SERVER_COLORS[h % SERVER_COLORS.length];
+}
+/** U-18: when a server has several sessions in view, disambiguate by an
+ *  ordinal suffix instead of showing two identical labels. */
+function sessionLabel(tab: TermTab, tabs: TermTab[]): string {
+  if (tab.serverId === "") return tab.label;
+  const same = tabs.filter((t) => t.serverId === tab.serverId);
+  if (same.length <= 1) return tab.label;
+  const idx = same.findIndex((t) => t.id === tab.id);
+  return `${tab.label} #${idx + 1}`;
+}
+
 /** U-3: map raw ssh2/HTTP failure text to a human-classified error surface. */
-function classifySshError(msg: string): { title: string; detail: string } {
-  const m = String(msg);
+function classifySshError(msg: string): { title: string; detail: string } {  const m = String(msg);
   if (/timed?\s?out|ETIMEDOUT|timeout/i.test(m)) {
     return {
       title: "连接超时",
@@ -1652,8 +1673,11 @@ function MemberTile({
         <span className={"dmsMemberCheck" + (selected ? " isOn" : "")}>{selected ? Icon.check() : ""}</span>
       )}
       <span className="dmsBlockBadge" title={member.name}>
+        {tab !== undefined && tab.serverId !== "" && (
+          <span className="dmsColorDot" style={{ background: serverColor(tab.serverId), marginRight: 0 }} />
+        )}
         <span className={dotClass} />
-        <span className="dmsBlockBadgeNum">{member.name}</span>
+        <span className="dmsBlockBadgeNum">{tab !== undefined ? sessionLabel(tab, tabs) : member.name}</span>
       </span>
       <span className="dmsBlockFloat">
         <button
@@ -1704,9 +1728,13 @@ function ItemsView({
   memberDragFrom,
   onMemberDragStart,
   onMemberDragEnd,
+  servers,
+  onAddServer,
+  onPickServer,
 }: {
   collection: any;
   tabs: TermTab[];
+  servers: ServerView[];
   magnifiedMember: number | null;
   onMagnifyMember: (idx: number | null) => void;
   /** #45: focused member index inside the active workspace. */
@@ -1724,6 +1752,9 @@ function ItemsView({
   memberDragFrom: number | null;
   onMemberDragStart: (idx: number) => void;
   onMemberDragEnd: () => void;
+  /** U-10: branching first-run guidance. */
+  onAddServer: () => void;
+  onPickServer: () => void;
 }) {
   // #46: broadcast mode — select members, type once, send to all.
   const [bcastOn, setBcastOn] = React.useState(false);
@@ -1836,11 +1867,35 @@ function ItemsView({
   };
   const it = collection.items[collection.activeIndex] ?? null;
   if (it === null) {
+    // U-10: branch the empty state by what the user actually has.
+    if (tabs.length === 0) {
+      if (servers.length === 0) {
+        return (
+          <div className="dmsItemsEmpty">
+            <span>还没有配置服务器</span>
+            <button className="dmsEmptyBtn" onClick={onAddServer}>
+              {Icon.plus()} 添加第一台服务器
+            </button>
+          </div>
+        );
+      }
+      return (
+        <div className="dmsItemsEmpty">
+          <span>还没有会话——连接一台服务器开始</span>
+          <button className="dmsEmptyBtn" onClick={onPickServer}>
+            {Icon.terminal(13)} 新会话
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="dmsItemsEmpty">
-        <span>还没有会话</span>
+        <span>
+          <b>{tabs.length}</b> 个会话在后台运行
+        </span>
+        <span style={{ fontSize: 11.5, opacity: 0.8 }}>关闭的会话会回到这里，直到被回收</span>
         <button className="dmsEmptyBtn" onClick={openSidebar}>
-          {Icon.plus()} 打开侧栏放入会话
+          {Icon.terminal(13)} 打开会话面板
         </button>
       </div>
     );
@@ -1852,6 +1907,9 @@ function ItemsView({
           <span>空标签——从右侧边栏放入会话</span>
           <button className="dmsEmptyBtn" onClick={openSidebar}>
             {Icon.plus()} 打开侧栏
+          </button>
+          <button className="dmsEmptyBtn" onClick={onPickServer}>
+            {Icon.terminal(13)} 新会话
           </button>
         </div>
       );
@@ -2916,6 +2974,7 @@ function TerminalWindowFrame() {
               key={i}
               className={"dmsTab" + (i === collection.activeIndex ? " isActive" : "") + (it.kind === "workspace" ? " isGroup" : "") + (tabDropTarget === i ? " isDropTarget" : "")}
               title={it.kind === "workspace" ? "拖标签到此处追加成员" : "拖到另一标签合并成组"}
+              style={itTab !== undefined && itTab.serverId !== "" ? { borderLeftColor: serverColor(itTab.serverId) } : undefined}
               draggable={renaming === null || renaming.tab !== i}
               onDragStart={(e) => {
                 // only a session tab can be merged (empty/group tabs cannot)
@@ -2974,7 +3033,7 @@ function TerminalWindowFrame() {
                   aria-selected={i === collection.activeIndex}
                   onClick={() => commit(setActiveIndex(collection, i))}
                 >
-                  {it.kind === "workspace" ? `${it.name} · ${it.members.length}` : it.name}
+                  {it.kind === "workspace" ? `${it.name} · ${it.members.length}` : itTab !== undefined ? sessionLabel(itTab, tabs) : it.name}
                 </button>
               )}
               <button
@@ -2994,6 +3053,9 @@ function TerminalWindowFrame() {
         </div>
         <button className="dmsTabAdd" title="新标签页（Alt+t）" aria-label="新标签页" onClick={newTab}>
           {Icon.plus()}
+        </button>
+        <button className="dmsTabAdd" title="新会话（选择服务器）" aria-label="新会话" onClick={() => setPicker(true)}>
+          {Icon.terminal(13)}
         </button>
         <button className="dmsTabAdd" title="新建组合（勾选会话并排监控）" aria-label="新建组合" onClick={() => setGroupPick(new Set())}>
           {Icon.grid()}
@@ -3062,6 +3124,9 @@ function TerminalWindowFrame() {
             memberDragFrom={dragMemberFrom}
             onMemberDragStart={setDragMemberFrom}
             onMemberDragEnd={() => setDragMemberFrom(null)}
+            servers={servers}
+            onAddServer={() => setDrawer(true)}
+            onPickServer={() => setPicker(true)}
           />
           {picker && (
             <ServerPicker
@@ -3305,8 +3370,9 @@ function RightSidebar({
               <span className="dmsSidebarIcon">
                 <span className={dotClass(t)} />
               </span>
-              <span className="dmsSidebarLabel" title={t.label}>
-                {t.label}
+              {t.serverId !== "" && <span className="dmsColorDot" style={{ background: serverColor(t.serverId), marginRight: 0 }} />}
+              <span className="dmsSidebarLabel" title={sessionLabel(t, tabs)}>
+                {sessionLabel(t, tabs)}
               </span>
               <span className="dmsListHint">
                 {placed.has(t.id) ? "已放置" : reclaimLabel(t) ?? "未放置"}
