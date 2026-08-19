@@ -323,6 +323,13 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsMemberCheck{position:absolute;top:6px;right:6px;z-index:7;width:18px;height:18px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--wave-border);background:rgba(0,0,0,.5);color:#fff;pointer-events:none}
 .dmsMemberCheck.isOn{background:var(--wave-accent,#58c142);border-color:var(--wave-accent,#58c142)}
 
+/* Member drag & drop (#41). */
+.dmsWsMember.isDragging{opacity:.5}
+.dmsWsMember.isDropbefore{box-shadow:inset 3px 0 0 var(--wave-accent,#58c142)}
+.dmsWsMember.isDropafter{box-shadow:inset -3px 0 0 var(--wave-accent,#58c142)}
+.dmsWsMember.isDropswap{box-shadow:0 0 0 2px var(--wave-accent,#58c142)}
+.dmsTab.isDropTarget{border-color:var(--wave-accent,#58c142);color:var(--wave-fg)}
+
 /* Esc exit hint: persistent while magnified or maximized (U-4). */
 .dmsEscHint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;box-shadow:0 4px 14px rgba(0,0,0,.3);backdrop-filter:blur(4px)}
 .dmsWin.isLight .dmsEscHint{background:rgba(255,255,255,.85);color:#222;box-shadow:0 4px 14px rgba(0,0,0,.18)}
@@ -1694,6 +1701,9 @@ function ItemsView({
   onReconnect,
   onRemoveMember,
   quiet,
+  memberDragFrom,
+  onMemberDragStart,
+  onMemberDragEnd,
 }: {
   collection: any;
   tabs: TermTab[];
@@ -1710,6 +1720,10 @@ function ItemsView({
   onReconnect?: (tab: TermTab) => void;
   onRemoveMember?: (sessionId: string) => void;
   quiet?: boolean;
+  /** #41: member drag state (lifted so the tab strip can accept the drop). */
+  memberDragFrom: number | null;
+  onMemberDragStart: (idx: number) => void;
+  onMemberDragEnd: () => void;
 }) {
   // #46: broadcast mode — select members, type once, send to all.
   const [bcastOn, setBcastOn] = React.useState(false);
@@ -1717,6 +1731,53 @@ function ItemsView({
   const [bcastText, setBcastText] = React.useState("");
   const [flashSet, setFlashSet] = React.useState<Set<number>>(new Set());
   const flashTimer = React.useRef<number | null>(null);
+  // #41: member drop position indicator (before / after / swap).
+  const [memberDrop, setMemberDrop] = React.useState<{ idx: number; side: "before" | "after" | "swap" } | null>(null);
+  React.useEffect(() => {
+    if (memberDragFrom === null) setMemberDrop(null);
+  }, [memberDragFrom]);
+  /** Drop side from the pointer position along the workspace's main axis. */
+  const dropSideFor = (e: React.DragEvent, idx: number, orientation: "h" | "v"): "before" | "after" | "swap" | null => {
+    if (memberDragFrom === null || memberDragFrom === idx) return null;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const span = orientation === "h" ? rect.width : rect.height;
+    if (span <= 0) return "swap";
+    const pos = orientation === "h" ? e.clientX - rect.left : e.clientY - rect.top;
+    const rel = pos / span;
+    if (rel < 0.33) return "before";
+    if (rel > 0.66) return "after";
+    return "swap";
+  };
+  const applyMemberDrop = (e: React.DragEvent, idx: number, orientation: "h" | "v") => {
+    e.preventDefault();
+    const side = dropSideFor(e, idx, orientation);
+    if (side === null) {
+      onMemberDragEnd();
+      return;
+    }
+    const wsIdx = collection.activeIndex;
+    const wsItem = collection.items[wsIdx];
+    if (wsItem === undefined || wsItem.kind !== "workspace") return;
+    const from = memberDragFrom;
+    let next = collection;
+    if (side === "swap") {
+      next = swapMembers(collection, wsIdx, from, idx);
+    } else {
+      const last = wsItem.members.length - 1;
+      const to =
+        side === "before"
+          ? from < idx
+            ? idx - 1
+            : idx
+          : from < idx
+            ? idx
+            : Math.min(idx + 1, last);
+      next = reorderMember(collection, wsIdx, from, to);
+    }
+    onCommit(next);
+    setMemberDrop(null);
+    onMemberDragEnd();
+  };
   const itKind = collection.items[collection.activeIndex]?.kind;
   React.useEffect(() => {
     if (itKind !== "workspace") {
@@ -1791,7 +1852,30 @@ function ItemsView({
         const pct = shownTotal > 0 ? (shownSizes[i] / shownTotal) * 100 : 100 / shown.length;
         return (
           <React.Fragment key={m.sessionId}>
-            <div className="dmsWsMember" style={{ flex: `${pct}% 1 0` }}>
+            <div
+              className={
+                "dmsWsMember" +
+                (memberDragFrom === idx ? " isDragging" : "") +
+                (memberDrop !== null && memberDrop.idx === idx ? " isDrop" + memberDrop.side : "")
+              }
+              style={{ flex: `${pct}% 1 0` }}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/plain", String(idx));
+                e.dataTransfer.effectAllowed = "move";
+                onMemberDragStart(idx);
+              }}
+              onDragOver={(e) => {
+                const side = dropSideFor(e, idx, it.orientation);
+                if (side === null) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setMemberDrop({ idx, side });
+              }}
+              onDragLeave={() => setMemberDrop((v) => (v !== null && v.idx === idx ? null : v))}
+              onDrop={(e) => applyMemberDrop(e, idx, it.orientation)}
+              onDragEnd={onMemberDragEnd}
+            >
               <MemberTile
                 member={m}
                 tabs={tabs}
@@ -2072,6 +2156,10 @@ function TerminalWindowFrame() {
   React.useEffect(() => {
     setActiveMember(null);
   }, [collection.activeIndex]);
+  /** #41: drag-and-drop state — tab-strip merges and member reorder/out. */
+  const [dragTabFrom, setDragTabFrom] = React.useState<number | null>(null);
+  const [tabDropTarget, setTabDropTarget] = React.useState<number | null>(null);
+  const [dragMemberFrom, setDragMemberFrom] = React.useState<number | null>(null);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
   const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme, getGuiScheme);
 
@@ -2728,7 +2816,36 @@ function TerminalWindowFrame() {
           toggleMax();
         }}
       >
-        <div className="dmsTabList" role="tablist">
+        <div
+          className="dmsTabList"
+          role="tablist"
+          // #41: dropping a workspace member here converts it back to its own tab.
+          onDragOver={(e) => {
+            if (dragMemberFrom === null) return;
+            if ((e.target as HTMLElement).closest(".dmsTab")) return; // tabs handle their own drops
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={(e) => {
+            if (dragMemberFrom === null) return;
+            if ((e.target as HTMLElement).closest(".dmsTab")) return;
+            e.preventDefault();
+            const wsItem = activeItem;
+            if (wsItem !== null && wsItem.kind === "workspace") {
+              const r = removeMember(collection, collection.activeIndex, dragMemberFrom);
+              let next = r.collection;
+              if (r.member !== null) {
+                const t = addTab(next);
+                next = {
+                  ...t,
+                  items: t.items.map((x, j) => (j === t.items.length - 1 ? { ...x, sessionId: r.member!.sessionId, name: r.member!.name } : x)),
+                };
+              }
+              commitItems(next);
+            }
+            setDragMemberFrom(null);
+          }}
+        >
           {collection.items.map((it, i) => {
             const itTab = it.kind === "tab" && it.sessionId !== null ? tabs.find((t) => t.id === it.sessionId) : undefined;
             const itDot =
@@ -2744,7 +2861,38 @@ function TerminalWindowFrame() {
             return (
             <span
               key={i}
-              className={"dmsTab" + (i === collection.activeIndex ? " isActive" : "") + (it.kind === "workspace" ? " isGroup" : "")}
+              className={"dmsTab" + (i === collection.activeIndex ? " isActive" : "") + (it.kind === "workspace" ? " isGroup" : "") + (tabDropTarget === i ? " isDropTarget" : "")}
+              draggable={renaming === null || renaming.tab !== i}
+              onDragStart={(e) => {
+                // only a session tab can be merged (empty/group tabs cannot)
+                if (it.kind !== "tab" || it.sessionId === null) {
+                  e.preventDefault();
+                  return;
+                }
+                e.dataTransfer.setData("text/plain", String(i));
+                e.dataTransfer.effectAllowed = "move";
+                setDragTabFrom(i);
+              }}
+              onDragOver={(e) => {
+                // #41: tab onto tab merges; tab onto workspace appends a member
+                if (dragTabFrom === null || dragTabFrom === i) return;
+                if (collection.items[dragTabFrom]?.kind !== "tab") return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setTabDropTarget(i);
+              }}
+              onDragLeave={() => setTabDropTarget((v) => (v === i ? null : v))}
+              onDrop={(e) => {
+                if (dragTabFrom === null || dragTabFrom === i) return;
+                e.preventDefault();
+                commit(merge(collection, dragTabFrom, i));
+                setDragTabFrom(null);
+                setTabDropTarget(null);
+              }}
+              onDragEnd={() => {
+                setDragTabFrom(null);
+                setTabDropTarget(null);
+              }}
               onDoubleClick={() => setRenaming({ tab: i, text: it.name })}
             >
               {itDot !== null && (
@@ -2857,6 +3005,9 @@ function TerminalWindowFrame() {
               })
             }
             quiet={!focused}
+            memberDragFrom={dragMemberFrom}
+            onMemberDragStart={setDragMemberFrom}
+            onMemberDragEnd={() => setDragMemberFrom(null)}
           />
           {picker && (
             <ServerPicker
