@@ -251,8 +251,9 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsDivider.isV{width:6px;top:0;bottom:0;cursor:col-resize;transform:translateX(-50%)}
 .dmsDivider.isH{height:6px;left:0;right:0;cursor:row-resize;transform:translateY(-50%)}
 .dmsDivider:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dmsBlock{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--dmst-bg,#1e2128);border:1px solid transparent}
-.dmsBlock.isActive{border-color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
+.dmsBlock{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--dmst-bg,#1e2128);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;margin:2px;overflow:hidden}
+.dmsBlock:hover{border-color:var(--dsw-alias-label-dimmed)}
+.dmsBlock.isActive{border-color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));box-shadow:0 0 0 1px var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
 .dmsBlock.isSwapTarget{border-color:#fff}
 .dmsBlock.isDrop-left{border-left:3px solid #e5484d}
 .dmsBlock.isDrop-right{border-right:3px solid #2ee62e}

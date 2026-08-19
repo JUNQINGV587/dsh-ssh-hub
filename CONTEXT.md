@@ -33,19 +33,23 @@ One live SSH connection plus its shell channel, attached to a Server. Lives on t
 _Avoid_: tab (a UI grouping of sessions), connection
 
 **Terminal Window**:
-The single floating window over the entire GUI that hosts the terminal surface (registered in `shell.overlay`, root scope). Draggable (viewport-clamped), resizable, double-click to maximize into the full frame — windowed and maximized are two viewports over the same Workspace. Opening uses a scale+fade animation; when the window loses focus only the frame dims, terminal content stays readable. Closed windows never affect sessions.
+The single floating window over the entire GUI that hosts the terminal surface (registered in `shell.overlay`, root scope). Draggable (viewport-clamped), resizable, double-click to maximize into the full frame. Inside: a Wave-style Tab bar, a Workspace switcher at its left, and the Block grid. Opening uses a scale+fade animation; when the window loses focus only the frame dims, terminal content stays readable. Closed windows never affect sessions.
 _Avoid_: panel, dock, drawer, bottom panel
 
 **Workspace**:
-The global split tree plus the set of Terminal Sessions. Exactly one workspace; the Terminal Window and its maximized state are viewports over it. Sessions not placed in the tree live in the unplaced list. The host owns the workspace state (served at `/ssh-hub/tree`, pushed over `/tree/events`).
+A named, iconed, colored set of Tabs — a layout template. A workspace never owns sessions: block leaves reference them, and the global Unplaced List is the single source of truth. Switching workspaces, closing Tabs, or deleting a Workspace keeps every session running in the list. The host owns the collection (served at `/ssh-hub/workspace`, pushed over `/workspace/events`); workspaces are memory-resident, not saved to disk.
 _Avoid_: layout, window state (too loose)
+
+**Tab**:
+One split tree of Blocks inside a Workspace, with its own name. The active Tab is remembered per Workspace. Closing a Tab returns its sessions to the Unplaced List; creating a Tab makes a single empty Block.
+_Avoid_: pane, block (a Block is inside a Tab), page
 
 **Block**:
 One pane of the Workspace holding exactly one Terminal Session (or an empty slot). Blocks are arranged by recursive binary splits; a block can be split in four directions, its divider dragged, and its session dragged onto another block to swap (centre) or open a new pane (edge, RGB-coded direction preview).
 _Avoid_: pane, tile, split, cell
 
 **Split Tree**:
-The recursive binary tree of Blocks: a Leaf holds one session (or is empty), a Split has a direction (`h` left/right, `v` top/bottom) and a draggable ratio. The wire schema for `/ssh-hub/tree`.
+The recursive binary tree of Blocks inside one Tab: a Leaf holds one session (or is empty), a Split has a direction (`h` left/right, `v` top/bottom) and a draggable ratio. A Block can be magnified to fill the window (a subtree view whose edits write back at its path).
 _Avoid_: grid, layout template, tiling
 
 **Unplaced List**:

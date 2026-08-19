@@ -7,10 +7,11 @@
 ## 特性
 
 - 🪟 **终端浮窗**：一个浮动在整个 GUI 之上的终端窗口（<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> 或左栏「SSH 终端」按钮打开）。拖标题栏移动（不会拖出屏幕）、右下角缩放、双击最大化、<kbd>Esc</kbd> 先退出最大化再收起。打开有轻动画（尊重系统「减弱动态效果」）；窗口失焦时只淡化窗框——终端输出始终清晰可读
-- 🌳 **分屏树工作区**：每格（Block）承载一个会话，从格子标题条四向递归分割（← → ↑ ↓）；分隔线可拖；把一格拖到另一格**中央**互换两个会话、拖到**边缘**在那边开新格（红=左、绿=右、青=上、蓝=下 实时预览）。能开几格由窗口大小决定
+- 🌳 **工作区 × 标签页 × 分屏树**：工作区是有名称/图标/颜色的布局模板，内含多个标签页；每页一棵分屏树。切换器新建工作区（空模板或复制当前布局），标签栏切换标签页（Alt+1-9，F2 重命名）；格子四向递归分割（← → ↑ ↓）、分隔线可拖、块拖到另一格**中央**互换 / **边缘**开新格（红=左、绿=右、青=上、蓝=下 预览）
+- 🔍 **块放大**：双击格子标题条（或 Alt+m）把该块放大到占满窗口；放大态可继续分割（树保留结果）；Alt+m / Esc 还原
 - 📋 **未放置会话清单**：不在树中的会话在清单面板里照常运行，点条目放入当前聚焦的格子
 - ♻️ **会话宿主化**：关闭窗口、移除格子、刷新页面、切换对话都不会杀掉你的 shell；重连回放近期输出，无查看者的会话 30 分钟后回收
-- 🎹 **快捷键可配置**：设置 → 插件 → 插件配置 → DSH-SSH-HUB → 快捷键（开关窗口 / 最大化），带格式校验与 DSH 冲突提示，保存后立即生效
+- 🎹 **Wave 风格快捷键可配置**：Alt 系 Wave 预设（Alt+t 新标签、Alt+w 关块、Alt+Shift+w 关标签、Alt+d / Alt+Shift+d 分割、Alt+m 放大、Ctrl+Shift+1-9 跳块）；全部动作可在 设置 → 插件 → 插件配置 → DSH-SSH-HUB → 快捷键 修改（格式校验、DSH 冲突提示、即时生效）
 - 🔑 **四种认证方式**：密码、私钥（支持 passphrase）、SSH Agent、无认证（本机免密）
 - 🚀 **连接测试**：保存服务器前可先测试（连通性 + 认证 + 延迟）
 - 🎨 **主题自适应终端**：终端跟随 DSH GUI 的浅色/深色主题（主题服务缺失时回退到系统 `prefers-color-scheme`）；工具栏循环按钮可固定 **跟随界面 / 深色 / 浅色**（按浏览器记忆）。已打开的终端原地热切换。两套调色板均满足 WCAG 对比度门槛（前景/背景 ≥ 7:1，ANSI 色 ≥ 4.5:1），由 `npm test` 强制校验
@@ -98,8 +99,8 @@ npm test           # 集成测试（对接本地测试 sshd，见 tests/）
 
 ### 工作原理
 
-- **host 半**（`src/host/`）：cordis 插件（`inject: ['webServer']`），暴露 `/ssh-hub` REST API 与按会话注册的 WebSocket upgrade 路由；SSH 走 [`ssh2`](https://github.com/mscdex/ssh2)。Terminal Session **宿主化**：脱离任何客户端照常存活，携带滚动环形缓冲（重连回放），无查看者 30 分钟后回收（`src/host/registry.ts`、`src/host/scrollback.ts`）。全局唯一 **工作区分屏树** 由 `/ssh-hub/tree` 提供、`/tree/events` 广播；会话死亡时宿主清空对应叶子。
-- **client 半**（`src/client/`）：预构建 React bundle；终端浮窗渲染进 `shell.overlay` 槽位（全框面、root scope），左栏入口注册在 `sidebar.footer.action`。分屏树（`src/shared/splittree.mjs`）与快捷键解析（`src/shared/keybind.mjs`）是纯 DOM-free 模块。终端模拟器用 [`@xterm/xterm`](https://github.com/xtermjs/xterm.js)。
+- **host 半**（`src/host/`）：cordis 插件（`inject: ['webServer']`），暴露 `/ssh-hub` REST API 与按会话注册的 WebSocket upgrade 路由；SSH 走 [`ssh2`](https://github.com/mscdex/ssh2)。Terminal Session **宿主化**：脱离任何客户端照常存活，携带滚动环形缓冲（重连回放），无查看者 30 分钟后回收（`src/host/registry.ts`、`src/host/scrollback.ts`）。全局 **工作区集合**（工作区×标签页×分屏树）由 `/ssh-hub/workspace` 提供、`/workspace/events` 广播；会话死亡时宿主清空所有对应叶子。
+- **client 半**（`src/client/`）：预构建 React bundle；终端浮窗渲染进 `shell.overlay` 槽位（全框面、root scope），左栏入口注册在 `sidebar.footer.action`。分屏树（`src/shared/splittree.mjs`）、工作区集合（`src/shared/workspace.mjs`）与快捷键解析（`src/shared/keybind.mjs`）是纯 DOM-free 模块。终端模拟器用 [`@xterm/xterm`](https://github.com/xtermjs/xterm.js)。
 - 数据流：`xterm → ws → ssh2 stream → 远端 shell`，输出原路返回。窗口态与最大化态可同时 attach 同一批会话（多客户端广播）。
 
 ### 集成测试
