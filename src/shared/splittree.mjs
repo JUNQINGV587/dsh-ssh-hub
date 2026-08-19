@@ -94,6 +94,12 @@ export function swapSessions(tree, p1, p2) {
   return next;
 }
 
+/** Replace the subtree at `path` with `subtree` (a no-op when the path
+ *  does not resolve — used by the magnified view to write changes back). */
+export function replaceSubtree(tree, path, subtree) {
+  return rebuild(tree, path, subtree);
+}
+
 /** Set a split's ratio (clamped); a no-op when `path` is not a split. */
 export function setRatio(tree, path, ratio) {
   const target = nodeAt(tree, path);

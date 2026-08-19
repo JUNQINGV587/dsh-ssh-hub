@@ -26,6 +26,7 @@ import {
   setRatio as treeSetRatio,
   collectSessions as collectTreeSessions,
   findPath,
+  replaceSubtree,
 } from "../shared/splittree.mjs";
 import {
   defaultCollection,
@@ -257,6 +258,11 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsBlock.isDrop-bottom{border-bottom:3px solid #4c8dff}
 .dmsBlock.isDragging{opacity:.6}
 .dmsBlockBar{flex:none;height:26px;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dms-specific-tip,var(--dsw-specific-tip));font-size:11.5px;color:var(--dsw-alias-label-secondary);user-select:none;-webkit-user-select:none}
+.dmsBlockDotWrap{flex:none;display:grid;place-items:center}
+.dmsBlockDot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dmsBlockDot.isConnecting{background:#e8b339;animation:dmsPulse 1s ease-in-out infinite}
+.dmsBlockDot.isLive{background:#2ee62e}
+.dmsBlockDot.isClosed{background:#e74856}
 .dmsBlockNum{flex:none;min-width:16px;height:16px;display:grid;place-items:center;border-radius:5px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:600}
 .dmsBlockLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmsBlockActions{flex:none;display:none;align-items:center;gap:1px}
@@ -1250,6 +1256,8 @@ function SplitTreeView({
   blockSize,
   drag,
   onDrag,
+  onMagnify,
+  isMagnified,
 }: {
   node: any;
   path: number[];
@@ -1264,6 +1272,8 @@ function SplitTreeView({
   blockSize: { w: number; h: number };
   drag: DragState | null;
   onDrag: (d: DragState | null) => void;
+  onMagnify: (path: number[]) => void;
+  isMagnified: boolean;
 }) {
   if (node.kind === "leaf") {
     return (
@@ -1281,6 +1291,8 @@ function SplitTreeView({
         size={blockSize}
         drag={drag}
         onDrag={onDrag}
+        onMagnify={onMagnify}
+        isMagnified={isMagnified}
       />
     );
   }
@@ -1302,6 +1314,8 @@ function SplitTreeView({
           blockSize={isH ? { w: blockSize.w * node.ratio, h: blockSize.h } : { w: blockSize.w, h: blockSize.h * node.ratio }}
           drag={drag}
           onDrag={onDrag}
+          onMagnify={onMagnify}
+          isMagnified={isMagnified}
         />
       </div>
       <Divider path={path} dir={node.dir} tree={tree} commitTree={commitTree} container={blockSize} />
@@ -1320,6 +1334,8 @@ function SplitTreeView({
           blockSize={isH ? { w: blockSize.w * (1 - node.ratio), h: blockSize.h } : { w: blockSize.w, h: blockSize.h * (1 - node.ratio) }}
           drag={drag}
           onDrag={onDrag}
+          onMagnify={onMagnify}
+          isMagnified={isMagnified}
         />
       </div>
     </div>
@@ -1431,6 +1447,8 @@ function BlockView({
   size,
   drag,
   onDrag,
+  onMagnify,
+  isMagnified,
 }: {
   path: number[];
   sessionId: string | null;
@@ -1445,6 +1463,8 @@ function BlockView({
   size: { w: number; h: number };
   drag: DragState | null;
   onDrag: (d: DragState | null) => void;
+  onMagnify: (path: number[]) => void;
+  isMagnified: boolean;
 }) {
   const tab = sessionId !== null ? tabs.find((t) => t.id === sessionId) : undefined;
   const ref = React.useRef<HTMLDivElement>(null);
@@ -1510,6 +1530,14 @@ function BlockView({
     const same = drag.hover !== null && samePath(drag.hover.path, path) && drag.hover.zone === zone;
     if (!same) onDrag({ ...drag, hover: { path, zone } });
   };
+  const dotClass =
+    sessionId === null
+      ? "dmsBlockDot"
+      : tab === undefined || tab.status === "connecting"
+        ? "dmsBlockDot isConnecting"
+        : tab.status === "live"
+          ? "dmsBlockDot isLive"
+          : "dmsBlockDot isClosed";
   return (
     <div
       ref={ref}
@@ -1522,10 +1550,28 @@ function BlockView({
         className="dmsBlockBar"
         title={sessionId !== null ? tab?.label ?? sessionId : "空块（点击放入会话）"}
         onPointerDown={startBlockDrag}
+        onDoubleClick={(e) => {
+          if ((e.target as HTMLElement).closest("button")) return;
+          onMagnify(path);
+        }}
       >
+        <span className="dmsBlockDotWrap">
+          <span className={dotClass} />
+        </span>
         <span className="dmsBlockNum">{number}</span>
         <span className="dmsBlockLabel">{sessionId !== null ? tab?.label ?? sessionId : "点击放入会话"}</span>
         <span className="dmsBlockActions">
+          <button
+            className="dmsSplitBtn"
+            title={isMagnified ? "还原（Alt+m / Esc）" : "放大此块（Alt+m）"}
+            aria-label={isMagnified ? "还原" : "放大"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMagnify(path);
+            }}
+          >
+            {isMagnified ? Icon.minimize() : Icon.maximize()}
+          </button>
           {(Object.keys(SPLIT_DIR_LABEL) as Array<"left" | "right" | "top" | "bottom">).map((d) => (
             <button
               key={d}
@@ -1714,13 +1760,27 @@ export function TerminalWindow() {
   const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
   const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
   const { collection, commit } = useWorkspaceState(visible);
-  /** The active (workspace, tab) tree and a commit that writes it back. */
+  /** The active (workspace, tab) tree and a commit that writes it back.
+   *  When a block is magnified, the rendered tree is that subtree and writes
+   *  land back at its path (splitting inside a magnified block mutates the
+   *  tree, per the Wave-aligned decision). */
   const tree = activeTree(collection);
+  const renderTree = magnifiedPath !== null ? nodeAtPath(tree, magnifiedPath) ?? tree : tree;
   const commitTree = React.useCallback(
-    (nextTree: any) => commit(setActiveTree(collection, nextTree)),
-    [collection, commit],
+    (nextTree: any) => {
+      if (magnifiedPath !== null) {
+        commit(setActiveTree(collection, replaceSubtree(tree, magnifiedPath, nextTree)));
+      } else {
+        commit(setActiveTree(collection, nextTree));
+      }
+    },
+    [collection, commit, magnifiedPath, tree],
   );
+  const toggleMagnify = (path: number[]) => {
+    setMagnifiedPath((cur) => (cur !== null && samePath(cur, path) ? null : path));
+  };
   const [wsOpen, setWsOpen] = React.useState(false);
+  const [magnifiedPath, setMagnifiedPath] = React.useState<number[] | null>(null);
   const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
 
@@ -1864,11 +1924,18 @@ export function TerminalWindow() {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (getTerminalMaximized()) setTerminalMaximized(false);
+        if (magnifiedPath !== null) setMagnifiedPath(null);
+        else if (getTerminalMaximized()) setTerminalMaximized(false);
         else setTerminalVisible(false);
         return;
       }
       const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+      if (alt && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        if (magnifiedPath !== null) setMagnifiedPath(null);
+        else if (activePath !== null) toggleMagnify(activePath);
+        return;
+      }
       const altShift = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
       if (alt && e.key.toLowerCase() === "t") {
         e.preventDefault();
@@ -2225,9 +2292,9 @@ export function TerminalWindow() {
       </div>
       <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
         <SplitTreeView
-          node={tree}
+          node={renderTree}
           path={[]}
-          tree={tree}
+          tree={renderTree}
           commitTree={commitTree}
           tabs={tabs}
           activePath={activePath}
@@ -2241,6 +2308,8 @@ export function TerminalWindow() {
           blockSize={{ w: size.w, h: size.h }}
           drag={drag}
           onDrag={setDrag}
+          onMagnify={toggleMagnify}
+          isMagnified={magnifiedPath !== null}
         />
         {listOpen && (
           <SessionListPanel

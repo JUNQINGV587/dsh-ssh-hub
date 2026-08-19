@@ -14,6 +14,7 @@ import {
   newTree,
   split,
   removeLeaf,
+  replaceSubtree,
   setSession,
   swapSessions,
   setRatio,
@@ -118,6 +119,10 @@ check("findPath returns null when absent", findPath(tdeep, "Z") === null);
 console.log("8. normalizeTree repairs bad shapes");
 const good = normalizeTree(tdeep);
 check("valid tree passes through", JSON.stringify(good) === JSON.stringify(tdeep), JSON.stringify(good));
+const replaced = replaceSubtree(tdeep, [1, 1], { kind: "leaf", sessionId: "X" });
+check("replaceSubtree swaps a subtree", replaced.b.b.sessionId === "X" && replaced.a.sessionId === "A", JSON.stringify(replaced));
+const replacedInner = replaceSubtree(tdeep, [1], { kind: "leaf", sessionId: "Z" });
+check("replaceSubtree on an internal node", replacedInner.kind === "split" && replacedInner.b.kind === "leaf" && replacedInner.b.sessionId === "Z");
 const bad1 = normalizeTree({ kind: "split", dir: "x", ratio: 2, a: { kind: "leaf", sessionId: "A" }, b: { kind: "leaf", sessionId: "B" } });
 check("unknown dir -> h", bad1.dir === "h");
 check("out-of-range ratio clamped", bad1.ratio >= 0.15 && bad1.ratio <= 0.85);
