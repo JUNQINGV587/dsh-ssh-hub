@@ -220,6 +220,7 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsBlock.isDrop-right{border-right:3px solid #2ee62e}
 .dmsBlock.isDrop-top{border-top:3px solid #4cc2ff}
 .dmsBlock.isDrop-bottom{border-bottom:3px solid #4c8dff}
+.dmsBlock.isDragging{opacity:.6}
 .dmsBlockBar{flex:none;height:26px;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dms-specific-tip,var(--dsw-specific-tip));font-size:11.5px;color:var(--dsw-alias-label-secondary);user-select:none;-webkit-user-select:none}
 .dmsBlockNum{flex:none;min-width:16px;height:16px;display:grid;place-items:center;border-radius:5px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:600}
 .dmsBlockLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1212,6 +1213,8 @@ function SplitTreeView({
   onEmptyClick,
   numberByPath,
   blockSize,
+  drag,
+  onDrag,
 }: {
   node: any;
   path: number[];
@@ -1224,6 +1227,8 @@ function SplitTreeView({
   onEmptyClick: (path: number[]) => void;
   numberByPath: Map<string, number>;
   blockSize: { w: number; h: number };
+  drag: DragState | null;
+  onDrag: (d: DragState | null) => void;
 }) {
   if (node.kind === "leaf") {
     return (
@@ -1239,6 +1244,8 @@ function SplitTreeView({
         onEmptyClick={onEmptyClick}
         number={numberByPath.get(path.join(".")) ?? 0}
         size={blockSize}
+        drag={drag}
+        onDrag={onDrag}
       />
     );
   }
@@ -1258,6 +1265,8 @@ function SplitTreeView({
           onEmptyClick={onEmptyClick}
           numberByPath={numberByPath}
           blockSize={isH ? { w: blockSize.w * node.ratio, h: blockSize.h } : { w: blockSize.w, h: blockSize.h * node.ratio }}
+          drag={drag}
+          onDrag={onDrag}
         />
       </div>
       <Divider path={path} dir={node.dir} tree={tree} commitTree={commitTree} container={blockSize} />
@@ -1274,6 +1283,8 @@ function SplitTreeView({
           onEmptyClick={onEmptyClick}
           numberByPath={numberByPath}
           blockSize={isH ? { w: blockSize.w * (1 - node.ratio), h: blockSize.h } : { w: blockSize.w, h: blockSize.h * (1 - node.ratio) }}
+          drag={drag}
+          onDrag={onDrag}
         />
       </div>
     </div>
@@ -1350,6 +1361,27 @@ function nodeAtPath(tree: any, path: number[]): any {
 }
 
 /** One block: a slim title bar over the terminal (or an empty slot). */
+/** A block drag in flight: which block started it and where the pointer is. */
+interface DragState {
+  fromPath: number[];
+  sessionId: string;
+  hover: { path: number[]; zone: "swap" | "left" | "right" | "top" | "bottom" } | null;
+  start: { x: number; y: number };
+}
+
+/** Classify a pointer position inside a block rect into swap/edge zones. */
+function hoverZone(el: HTMLElement, x: number, y: number): "swap" | "left" | "right" | "top" | "bottom" {
+  const r = el.getBoundingClientRect();
+  if (r.width === 0 || r.height === 0) return "swap";
+  const rx = (x - r.left) / r.width;
+  const ry = (y - r.top) / r.height;
+  if (rx < 0.2) return "left";
+  if (rx > 0.8) return "right";
+  if (ry < 0.2) return "top";
+  if (ry > 0.8) return "bottom";
+  return "swap";
+}
+
 function BlockView({
   path,
   sessionId,
@@ -1362,6 +1394,8 @@ function BlockView({
   onEmptyClick,
   number,
   size,
+  drag,
+  onDrag,
 }: {
   path: number[];
   sessionId: string | null;
@@ -1374,9 +1408,17 @@ function BlockView({
   onEmptyClick: (path: number[]) => void;
   number: number;
   size: { w: number; h: number };
+  drag: DragState | null;
+  onDrag: (d: DragState | null) => void;
 }) {
   const tab = sessionId !== null ? tabs.find((t) => t.id === sessionId) : undefined;
-  const [hover, setHover] = React.useState<"swap" | "left" | "right" | "top" | "bottom" | null>(null);
+  const ref = React.useRef<HTMLDivElement>(null);
+  const isDraggingThis = drag !== null && samePath(drag.fromPath, path);
+  // hover classification for this block while a drag is in flight
+  const myHover =
+    drag !== null && !isDraggingThis && drag.hover !== null && samePath(drag.hover.path, path)
+      ? drag.hover.zone
+      : null;
 
   const splitBtn = (dir: "left" | "right" | "top" | "bottom") => {
     const d = dir === "left" || dir === "right" ? "h" : "v";
@@ -1390,13 +1432,40 @@ function BlockView({
     commitTree(next ?? newTree(null));
   };
 
-  const dragClass = "dmsBlock" + (active ? " isActive" : "") + (hover === "swap" ? " isSwapTarget" : "") + (hover !== null && hover !== "swap" ? " isDrop-" + hover : "");
+  const dragClass =
+    "dmsBlock" +
+    (active ? " isActive" : "") +
+    (myHover === "swap" ? " isSwapTarget" : "") +
+    (myHover !== null && myHover !== "swap" ? " isDrop-" + myHover : "") +
+    (isDraggingThis ? " isDragging" : "");
+  // drag start: from the title bar (not buttons)
+  const startBlockDrag = (e: React.PointerEvent) => {
+    if (e.button !== 0 || sessionId === null) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    onDrag({ fromPath: path, sessionId, hover: null, start: { x: e.clientX, y: e.clientY } });
+  };
+  // drop handling: swap or edge-split are applied by the parent on pointerup;
+  // here we classify hover as the pointer moves over this block.
+  const trackHover = (e: React.PointerEvent) => {
+    if (drag === null || isDraggingThis || ref.current === null) return;
+    const zone = hoverZone(ref.current, e.clientX, e.clientY);
+    const same = drag.hover !== null && samePath(drag.hover.path, path) && drag.hover.zone === zone;
+    if (!same) onDrag({ ...drag, hover: { path, zone } });
+  };
   return (
     <div
+      ref={ref}
       className={dragClass}
       onClick={onFocus}
+      onPointerEnter={trackHover}
+      onPointerMove={trackHover}
     >
-      <div className="dmsBlockBar" title={sessionId !== null ? tab?.label ?? sessionId : "空块（点击放入会话）"}>
+      <div
+        className="dmsBlockBar"
+        title={sessionId !== null ? tab?.label ?? sessionId : "空块（点击放入会话）"}
+        onPointerDown={startBlockDrag}
+      >
         <span className="dmsBlockNum">{number}</span>
         <span className="dmsBlockLabel">{sessionId !== null ? tab?.label ?? sessionId : "点击放入会话"}</span>
         <span className="dmsBlockActions">
@@ -1602,6 +1671,7 @@ export function TerminalWindow() {
   const [size, setSize] = React.useState({ w: 0, h: 0 });
   const [focused, setFocused] = React.useState(true);
   const [opening, setOpening] = React.useState(false);
+  const [drag, setDrag] = React.useState<DragState | null>(null);
   const bodyRef = React.useRef<HTMLDivElement>(null);
 
   /* ---- world state: sessions + servers (projections of host truth) ---- */
@@ -1679,6 +1749,27 @@ export function TerminalWindow() {
       window.removeEventListener("blur", onBlur);
     };
   }, [visible]);
+
+  /* ---- block drag: swap (centre) or edge-split, RGB preview live ---- */
+  React.useEffect(() => {
+    if (drag === null) return;
+    const up = () => {
+      if (drag !== null) {
+        if (drag.hover !== null) {
+          if (drag.hover.zone === "swap") {
+            commitTree(treeSwapSessions(tree, drag.fromPath, drag.hover.path));
+          } else {
+            const dir = drag.hover.zone === "left" || drag.hover.zone === "right" ? "h" : "v";
+            const newFirst = drag.hover.zone === "left" || drag.hover.zone === "top";
+            commitTree(treeSplit(tree, drag.hover.path, dir, drag.sessionId, newFirst));
+          }
+        }
+        setDrag(null);
+      }
+    };
+    window.addEventListener("pointerup", up);
+    return () => window.removeEventListener("pointerup", up);
+  }, [drag, tree, commitTree]);
 
   /* ---- Esc: exit maximized first, then close the window ---- */
   React.useEffect(() => {
@@ -1872,6 +1963,8 @@ export function TerminalWindow() {
           }}
           numberByPath={numberByPath}
           blockSize={{ w: size.w, h: size.h }}
+          drag={drag}
+          onDrag={setDrag}
         />
         {listOpen && (
           <SessionListPanel
