@@ -28,6 +28,7 @@ import {
   findArr as layoutFindArr,
   collectSessions as collectLayoutSessions,
   layoutReplaceAt,
+  classifyDrop,
 } from "../shared/layout.mjs";
 import {
   defaultCollection,
@@ -263,7 +264,7 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsSplit.isH{flex-direction:row}
 .dmsSplit.isV{flex-direction:column}
 .dmsSplitPane{min-width:0;min-height:0;display:flex;position:relative}
-.dmsDivider{position:absolute;z-index:5;background:transparent}
+.dmsDivider{position:absolute;z-index:5;background:transparent;transition:background .1s ease .5s}
 .dmsDivider.isV{width:6px;top:0;bottom:0;cursor:col-resize;transform:translateX(-50%)}
 .dmsDivider.isH{height:6px;left:0;right:0;cursor:row-resize;transform:translateY(-50%)}
 .dmsDivider:hover{background:var(--dsw-alias-interactive-bg-hover)}
@@ -271,10 +272,20 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsBlock:hover{border-color:var(--dsw-alias-label-dimmed)}
 .dmsBlock.isActive{border-color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));box-shadow:0 0 0 1px var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
 .dmsBlock.isSwapTarget{border-color:#fff}
-.dmsBlock.isDrop-left{border-left:3px solid #e5484d}
-.dmsBlock.isDrop-right{border-right:3px solid #2ee62e}
-.dmsBlock.isDrop-top{border-top:3px solid #4cc2ff}
-.dmsBlock.isDrop-bottom{border-bottom:3px solid #4c8dff}
+.dmsDropHint{position:absolute;z-index:8;pointer-events:none;background:rgba(88,193,66,.35);border:1px solid rgba(88,193,66,.9);border-radius:6px}
+.dmsDrop-inline-before[data-dir="row"]{left:2px;top:6px;bottom:6px;width:30%}
+.dmsDrop-inline-after[data-dir="row"]{right:2px;top:6px;bottom:6px;width:30%}
+.dmsDrop-inline-before[data-dir="col"]{top:2px;left:6px;right:6px;height:30%}
+.dmsDrop-inline-after[data-dir="col"]{bottom:2px;left:6px;right:6px;height:30%}
+.dmsDrop-outer-before[data-dir="row"]{left:2px;top:2px;width:34%;height:34%}
+.dmsDrop-outer-after[data-dir="row"]{right:2px;bottom:2px;width:34%;height:34%}
+.dmsDrop-outer-before[data-dir="col"]{left:2px;top:2px;width:34%;height:34%}
+.dmsDrop-outer-after[data-dir="col"]{right:2px;bottom:2px;width:34%;height:34%}
+.dmsDrop-inner-before[data-dir="row"]{left:33%;top:2px;width:34%;height:34%}
+.dmsDrop-inner-after[data-dir="row"]{left:33%;bottom:2px;width:34%;height:34%}
+.dmsDrop-inner-before[data-dir="col"]{top:33%;left:2px;width:34%;height:34%}
+.dmsDrop-inner-after[data-dir="col"]{top:33%;right:2px;width:34%;height:34%}
+.dmsDrop-swap{left:50%;top:50%;width:22%;height:22%;transform:translate(-50%,-50%);background:rgba(88,193,66,.5);border-radius:8px}
 .dmsBlock.isDragging{opacity:.6}
 .dmsBlockBar{flex:none;height:26px;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dms-specific-tip,var(--dsw-specific-tip));font-size:11.5px;color:var(--dsw-alias-label-secondary);user-select:none;-webkit-user-select:none}
 .dmsBlockDotWrap{flex:none;display:grid;place-items:center}
@@ -1276,6 +1287,7 @@ function SplitTreeView({
   onDrag,
   onMagnify,
   isMagnified,
+  dir,
 }: {
   node: any;
   path: number[];
@@ -1292,6 +1304,7 @@ function SplitTreeView({
   onDrag: (d: DragState | null) => void;
   onMagnify: (path: number[]) => void;
   isMagnified: boolean;
+  dir: "row" | "col";
 }) {
   if (node.kind === "block") {
     return (
@@ -1311,6 +1324,7 @@ function SplitTreeView({
         onDrag={onDrag}
         onMagnify={onMagnify}
         isMagnified={isMagnified}
+        dir={dir}
       />
     );
   }
@@ -1342,6 +1356,7 @@ function SplitTreeView({
                 onDrag={onDrag}
                 onMagnify={onMagnify}
                 isMagnified={isMagnified}
+                dir={node.dir}
               />
             </div>
             {i < node.children.length - 1 && (
@@ -1422,22 +1437,18 @@ function nodeAtPath(tree: any, path: number[]): any {
 interface DragState {
   fromPath: number[];
   sessionId: string;
-  hover: { path: number[]; zone: "swap" | "left" | "right" | "top" | "bottom" } | null;
+  hover: { path: number[]; zone: DropZone } | null;
   start: { x: number; y: number };
 }
 
-/** Classify a pointer position inside a block rect into swap/edge zones. */
-function hoverZone(el: HTMLElement, x: number, y: number): "swap" | "left" | "right" | "top" | "bottom" {
-  const r = el.getBoundingClientRect();
-  if (r.width === 0 || r.height === 0) return "swap";
-  const rx = (x - r.left) / r.width;
-  const ry = (y - r.top) / r.height;
-  if (rx < 0.2) return "left";
-  if (rx > 0.8) return "right";
-  if (ry < 0.2) return "top";
-  if (ry > 0.8) return "bottom";
-  return "swap";
-}
+type DropZone =
+  | "swap"
+  | "inline-before"
+  | "inline-after"
+  | "outer-before"
+  | "outer-after"
+  | "inner-before"
+  | "inner-after";
 
 function BlockView({
   path,
@@ -1455,6 +1466,7 @@ function BlockView({
   onDrag,
   onMagnify,
   isMagnified,
+  dir,
 }: {
   path: number[];
   sessionId: string | null;
@@ -1471,6 +1483,7 @@ function BlockView({
   onDrag: (d: DragState | null) => void;
   onMagnify: (path: number[]) => void;
   isMagnified: boolean;
+  dir: "row" | "col";
 }) {
   const tab = sessionId !== null ? tabs.find((t) => t.id === sessionId) : undefined;
   const ref = React.useRef<HTMLDivElement>(null);
@@ -1514,7 +1527,6 @@ function BlockView({
     "dmsBlock" +
     (active ? " isActive" : "") +
     (myHover === "swap" ? " isSwapTarget" : "") +
-    (myHover !== null && myHover !== "swap" ? " isDrop-" + myHover : "") +
     (isDraggingThis ? " isDragging" : "");
   // drag start: from the title bar (not buttons); engaged after 4px
   const startBlockDrag = (e: React.PointerEvent) => {
@@ -1527,7 +1539,9 @@ function BlockView({
   // here we classify hover as the pointer moves over this block.
   const trackHover = (e: React.PointerEvent) => {
     if (drag === null || isDraggingThis || ref.current === null) return;
-    const zone = hoverZone(ref.current, e.clientX, e.clientY);
+    const r = ref.current.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    const zone = classifyDrop(dir, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
     const same = drag.hover !== null && samePath(drag.hover.path, path) && drag.hover.zone === zone;
     if (!same) onDrag({ ...drag, hover: { path, zone } });
   };
@@ -1589,6 +1603,7 @@ function BlockView({
       ) : (
         <XtermPane tab={tab ?? { id: sessionId, serverId: "", label: "…", status: "connecting" }} active={true} surface="window" onStatus={(patch) => onStatus(sessionId, patch)} />
       )}
+      {myHover !== null && <div className={"dmsDropHint dmsDrop-" + myHover} data-dir={dir} aria-hidden />}
     </div>
   );
 }
@@ -1912,10 +1927,7 @@ export function TerminalWindow() {
     };
     const up = (e: PointerEvent) => {
       if (drag !== null && drag.hover !== null && inWindow(e.target)) {
-        if (drag.hover.zone === "swap") {
-          commitTree(layoutDropBlock(tree, drag.fromPath, drag.hover.path, "swap"));
-        }
-        // other zones arrive with the 7-target drag in ticket #36
+        commitTree(layoutDropBlock(tree, drag.fromPath, drag.hover.path, drag.hover.zone));
       }
       setDrag(null);
     };
@@ -2354,6 +2366,7 @@ export function TerminalWindow() {
           onDrag={setDrag}
           onMagnify={toggleMagnify}
           isMagnified={magnifiedPath !== null}
+          dir="row"
         />
         {picker && (
           <ServerPicker servers={servers} busy={busy} onPick={connectTo} onManage={() => setDrawer(true)} onClose={() => setPicker(false)} />
