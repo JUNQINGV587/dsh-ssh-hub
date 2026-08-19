@@ -2,12 +2,10 @@
  * Pure workspace-collection module — the three-layer layout state (ADR-0007).
  *
  * A collection is:
- *   { workspaces: [ { name, icon, color,
- *                     tabs: [ { name, tree: SplitTree } ],
- *                     activeTab } ],
- *     activeWorkspace }
+ *   { tabs: [ { name, tree: LayoutTree } ], activeTab }
  *
- * Workspaces are layout templates (named/iconed/colored tab sets). Sessions
+ * Two layers (the Workspace layer was removed — tabs ARE the top-level
+ * containers, ADR-0007 revision). Sessions
  * are never owned by this module: block leaves reference them, and callers
  * clear leaves when a session dies. Copying a workspace copies structure only
  * — bindings are not duplicated. The module is DOM-free and doubles as the
@@ -24,16 +22,9 @@ export function newTree() {
  * @property {string} name
  * @property {import("./layout.mjs").TreeNode} tree
  *
- * @typedef {Object} WorkspaceState
- * @property {string} name
- * @property {string|null} icon
- * @property {string|null} color
+ * @typedef {Object} TabCollection
  * @property {TabState[]} tabs
  * @property {number} activeTab
- *
- * @typedef {Object} WorkspaceCollection
- * @property {WorkspaceState[]} workspaces
- * @property {number} activeWorkspace
  */
 
 const DEFAULT_NAME = "默认";
@@ -41,16 +32,8 @@ const DEFAULT_TAB = "标签 1";
 
 export function defaultCollection() {
   return {
-    workspaces: [
-      {
-        name: DEFAULT_NAME,
-        icon: null,
-        color: null,
-        tabs: [{ name: DEFAULT_TAB, tree: newTree(null) }],
-        activeTab: 0,
-      },
-    ],
-    activeWorkspace: 0,
+    tabs: [{ name: DEFAULT_TAB, tree: newTree(null) }],
+    activeTab: 0,
   };
 }
 
@@ -65,160 +48,102 @@ function normalizeTab(input) {
   return { name, tree };
 }
 
-function normalizeWorkspace(input) {
-  const name = typeof input?.name === "string" && input.name.length > 0 ? input.name : DEFAULT_NAME;
-  const icon = typeof input?.icon === "string" ? input.icon : null;
-  const color = typeof input?.color === "string" ? input.color : null;
-  const rawTabs = Array.isArray(input?.tabs) && input.tabs.length > 0 ? input.tabs : [undefined];
-  const tabs = rawTabs.map(normalizeTab);
-  const activeTab = Math.min(Math.max(0, Math.round(Number(input?.activeTab) || 0)), tabs.length - 1);
-  return { name, icon, color, tabs, activeTab };
-}
-
-/** Validate + repair arbitrary JSON into a well-formed collection. */
+/** Validate + repair arbitrary JSON into a well-formed two-layer collection.
+ *  Legacy three-layer state ({ workspaces: [...] }) migrates by promoting the
+ *  active workspace's tabs; everything else is discarded (sessions are never
+ *  owned by layout state, so nothing is lost). */
 export function normalizeCollection(input) {
   const d = defaultCollection();
-  if (input === null || typeof input !== "object" || !Array.isArray(input.workspaces) || input.workspaces.length === 0) {
-    return d;
+  if (input === null || typeof input !== "object") return d;
+  if (Array.isArray(input.workspaces)) {
+    const list = input.workspaces;
+    if (list.length === 0) return d;
+    const idx = Math.min(Math.max(0, Math.round(Number(input.activeWorkspace) || 0)), list.length - 1);
+    const ws = list[idx] ?? {};
+    const rawTabs = Array.isArray(ws.tabs) && ws.tabs.length > 0 ? ws.tabs : [undefined];
+    const tabs = rawTabs.map(normalizeTab);
+    const activeTab = Math.min(Math.max(0, Math.round(Number(ws.activeTab) || 0)), tabs.length - 1);
+    return { tabs, activeTab };
   }
-  const workspaces = input.workspaces.map(normalizeWorkspace);
-  const activeWorkspace = Math.min(Math.max(0, Math.round(Number(input.activeWorkspace) || 0)), workspaces.length - 1);
-  return { workspaces, activeWorkspace };
+  if (Array.isArray(input.tabs)) {
+    const tabs = input.tabs.length > 0 ? input.tabs.map(normalizeTab) : [undefined].map(normalizeTab);
+    const activeTab = Math.min(Math.max(0, Math.round(Number(input.activeTab) || 0)), tabs.length - 1);
+    return { tabs, activeTab };
+  }
+  return d;
 }
 
 /** Append a fresh workspace: an empty template, or a structural copy of
  *  another workspace with all session bindings cleared (copy layout, not
  *  sessions — the global list stays the single source of truth). */
-export function createWorkspace(collection, opts = {}) {
-  const name = typeof opts.name === "string" && opts.name.length > 0 ? opts.name : DEFAULT_NAME;
-  let tabs;
-  if (typeof opts.copyFrom === "number" && opts.copyFrom >= 0 && opts.copyFrom < collection.workspaces.length) {
-    const src = collection.workspaces[opts.copyFrom];
-    tabs = src.tabs.map((t) => ({ name: t.name, tree: clearSessions(JSON.parse(JSON.stringify(t.tree))) }));
-  } else {
-    tabs = [{ name: DEFAULT_TAB, tree: newTree(null) }];
-  }
-  const workspaces = [...collection.workspaces, { name, icon: null, color: null, tabs, activeTab: 0 }];
-  return { ...collection, workspaces };
-}
 
-export function removeWorkspace(collection, idx) {
-  if (idx < 0 || idx >= collection.workspaces.length) return collection;
-  const workspaces = collection.workspaces.filter((_, i) => i !== idx);
-  if (workspaces.length === 0) return defaultCollection();
-  const activeWorkspace = Math.min(collection.activeWorkspace, workspaces.length - 1);
-  return { workspaces, activeWorkspace };
-}
 
-export function renameWorkspace(collection, idx, name) {
-  if (idx < 0 || idx >= collection.workspaces.length) return collection;
-  const workspaces = collection.workspaces.map((w, i) => (i === idx ? { ...w, name } : w));
-  return { ...collection, workspaces };
-}
 
-export function setWorkspaceMeta(collection, idx, icon, color) {
-  if (idx < 0 || idx >= collection.workspaces.length) return collection;
-  const workspaces = collection.workspaces.map((w, i) =>
-    i === idx ? { ...w, icon: icon ?? null, color: color ?? null } : w,
-  );
-  return { ...collection, workspaces };
-}
 
-export function setActiveWorkspace(collection, idx) {
-  if (idx < 0 || idx >= collection.workspaces.length) return collection;
-  return { ...collection, activeWorkspace: idx };
-}
 
-export function addTab(collection, wsIdx) {
-  if (wsIdx < 0 || wsIdx >= collection.workspaces.length) return collection;
-  const workspaces = collection.workspaces.map((w, i) =>
-    i === wsIdx ? { ...w, tabs: [...w.tabs, { name: "标签 " + (w.tabs.length + 1), tree: newTree(null) }] } : w,
-  );
-  return { ...collection, workspaces };
+export function addTab(collection) {
+  return {
+    ...collection,
+    tabs: [...collection.tabs, { name: "标签 " + (collection.tabs.length + 1), tree: newTree(null) }],
+  };
 }
 
 /** Remove a tab; returns [collection, removedTree]. */
-export function removeTab(collection, wsIdx, tabIdx) {
-  if (wsIdx < 0 || wsIdx >= collection.workspaces.length) return [collection, null];
-  const ws = collection.workspaces[wsIdx];
-  if (tabIdx < 0 || tabIdx >= ws.tabs.length) return [collection, null];
-  const removed = ws.tabs[tabIdx].tree;
-  const tabs = ws.tabs.filter((_, i) => i !== tabIdx);
+export function removeTab(collection, tabIdx) {
+  if (tabIdx < 0 || tabIdx >= collection.tabs.length) return [collection, null];
+  const removed = collection.tabs[tabIdx].tree;
+  const tabs = collection.tabs.filter((_, i) => i !== tabIdx);
   const nextTabs = tabs.length > 0 ? tabs : [{ name: DEFAULT_TAB, tree: newTree(null) }];
-  const activeTab = Math.min(ws.activeTab, nextTabs.length - 1);
-  const workspaces = collection.workspaces.map((w, i) =>
-    i === wsIdx ? { ...w, tabs: nextTabs, activeTab } : w,
-  );
-  return [{ ...collection, workspaces }, removed];
+  const activeTab = Math.min(collection.activeTab, nextTabs.length - 1);
+  return [{ ...collection, tabs: nextTabs, activeTab }, removed];
 }
 
-export function renameTab(collection, wsIdx, tabIdx, name) {
-  if (wsIdx < 0 || wsIdx >= collection.workspaces.length) return collection;
-  const ws = collection.workspaces[wsIdx];
-  if (tabIdx < 0 || tabIdx >= ws.tabs.length) return collection;
-  const workspaces = collection.workspaces.map((w, i) =>
-    i === wsIdx ? { ...w, tabs: w.tabs.map((t, j) => (j === tabIdx ? { ...t, name } : t)) } : w,
-  );
-  return { ...collection, workspaces };
+export function renameTab(collection, tabIdx, name) {
+  if (tabIdx < 0 || tabIdx >= collection.tabs.length) return collection;
+  return { ...collection, tabs: collection.tabs.map((t, j) => (j === tabIdx ? { ...t, name } : t)) };
 }
 
-export function setActiveTab(collection, wsIdx, tabIdx) {
-  if (wsIdx < 0 || wsIdx >= collection.workspaces.length) return collection;
-  const ws = collection.workspaces[wsIdx];
-  if (tabIdx < 0 || tabIdx >= ws.tabs.length) return collection;
-  const workspaces = collection.workspaces.map((w, i) => (i === wsIdx ? { ...w, activeTab: tabIdx } : w));
-  return { ...collection, workspaces };
+export function setActiveTab(collection, tabIdx) {
+  if (tabIdx < 0 || tabIdx >= collection.tabs.length) return collection;
+  return { ...collection, activeTab: tabIdx };
 }
 
-/** Replace the SplitTree of the active (workspace, tab). */
+/** Replace the active tab's tree. */
 export function setActiveTree(collection, tree) {
-  const ws = collection.workspaces[collection.activeWorkspace];
-  if (ws === undefined || ws.tabs.length === 0) return collection;
-  const tabIdx = Math.min(ws.activeTab, ws.tabs.length - 1);
-  const workspaces = collection.workspaces.map((w, i) =>
-    i === collection.activeWorkspace
-      ? { ...w, tabs: w.tabs.map((t, j) => (j === tabIdx ? { ...t, tree } : t)) }
-      : w,
-  );
-  return { ...collection, workspaces };
+  const tabIdx = Math.min(collection.activeTab, collection.tabs.length - 1);
+  return { ...collection, tabs: collection.tabs.map((t, j) => (j === tabIdx ? { ...t, tree } : t)) };
 }
 
-/** The SplitTree of the active (workspace, tab). */
+/** The active tab's tree. */
 export function activeTree(collection) {
-  const ws = collection.workspaces[collection.activeWorkspace];
-  if (ws === undefined || ws.tabs.length === 0) return newTree(null);
-  return ws.tabs[Math.min(ws.activeTab, ws.tabs.length - 1)].tree;
+  if (collection.tabs.length === 0) return newTree(null);
+  return collection.tabs[Math.min(collection.activeTab, collection.tabs.length - 1)].tree;
 }
 
-/** Clear every leaf holding `sessionId` in all workspaces and tabs. */
+/** Clear every leaf holding `sessionId` across all tabs. */
 export function emptySessionFromAll(collection, sessionId) {
   let changed = false;
-  const workspaces = collection.workspaces.map((w) => ({
-    ...w,
-    tabs: w.tabs.map((t) => {
-      const tree = clearSession(t.tree, sessionId, () => {
-        changed = true;
-      });
-      return { ...t, tree };
-    }),
-  }));
-  return changed ? { ...collection, workspaces } : collection;
+  const tabs = collection.tabs.map((t) => {
+    const tree = clearSession(t.tree, sessionId, () => {
+      changed = true;
+    });
+    return { ...t, tree };
+  });
+  return changed ? { ...collection, tabs } : collection;
 }
 
 /** Every session id referenced by the collection (leaf order, deduped per call site). */
 export function collectSessions(collection) {
   const out = [];
-  for (const w of collection.workspaces) {
-    for (const t of w.tabs) {
-      const walk = (node) => {
-        if (node.kind === "block") {
-          if (node.sessionId !== null) out.push(node.sessionId);
-          return;
-        }
-        for (const c of node.children) walk(c);
-      };
-      walk(t.tree);
-    }
+  for (const t of collection.tabs) {
+    const walk = (node) => {
+      if (node.kind === "block") {
+        if (node.sessionId !== null) out.push(node.sessionId);
+        return;
+      }
+      for (const c of node.children) walk(c);
+    };
+    walk(t.tree);
   }
   return out;
 }

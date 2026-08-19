@@ -36,12 +36,8 @@ _Avoid_: tab (a UI grouping of sessions), connection
 The single floating window over the entire GUI that hosts the terminal surface (registered in `shell.overlay`, root scope). Draggable (viewport-clamped), resizable, double-click to maximize into the full frame. Inside: a Wave-style Tab bar, a Workspace switcher at its left, and the Block grid. Opening uses a scale+fade animation; when the window loses focus only the frame dims, terminal content stays readable. Closed windows never affect sessions.
 _Avoid_: panel, dock, drawer, bottom panel
 
-**Workspace**:
-A named, iconed, colored set of Tabs — a layout template. A workspace never owns sessions: block leaves reference them, and the global Unplaced List is the single source of truth. Switching workspaces, closing Tabs, or deleting a Workspace keeps every session running in the list. The host owns the collection (served at `/ssh-hub/workspace`, pushed over `/workspace/events`); workspaces are memory-resident, not saved to disk.
-_Avoid_: layout, window state (too loose)
-
 **Tab**:
-One split tree of Blocks inside a Workspace, with its own name. The active Tab is remembered per Workspace. Closing a Tab returns its sessions to the Unplaced List; creating a Tab makes a single empty Block.
+The top-level layout container — one Layout Tree of Blocks with its own name. The active Tab is remembered. Closing a Tab returns its sessions to the Unplaced List; creating a Tab makes a single empty Block. (The Workspace layer was removed: Tabs ARE the top level.)
 _Avoid_: pane, block (a Block is inside a Tab), page
 
 **Block**:

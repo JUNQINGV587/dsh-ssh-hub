@@ -1,6 +1,6 @@
 # Three-layer workspace model: workspaces of tabs of split trees
 
-Status: accepted
+Status: **superseded in part by ADR-0009** — the Workspace layer was removed (tabs are now the top-level containers); this ADR's session/template semantics carry over.
 
 The terminal layout state is a workspace collection — `{ workspaces: [ { name, icon, color, tabs: [ { name, tree: SplitTree } ], activeTab } ], activeWorkspace }` — served whole at `GET/PUT /ssh-hub/workspace` and pushed over `/workspace/events`. This replaces the single global tree of ADR-0006.
 

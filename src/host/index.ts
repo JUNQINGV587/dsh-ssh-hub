@@ -159,11 +159,8 @@ export function apply(ctx: any, config: any) {
       return { ...node, children: (node.children ?? []).map(walk) };
     };
     return {
-      workspaces: collection.workspaces.map((w: any) => ({
-        ...w,
-        tabs: w.tabs.map((t: any) => ({ ...t, tree: walk(t.tree) })),
-      })),
-      activeWorkspace: collection.activeWorkspace,
+      tabs: collection.tabs.map((t: any) => ({ ...t, tree: walk(t.tree) })),
+      activeTab: collection.activeTab,
     };
   }
 

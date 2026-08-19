@@ -216,10 +216,7 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsWinResize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:9}
 .dmsWinResize:after{content:'';position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid var(--dsw-alias-label-tertiary);border-bottom:2px solid var(--dsw-alias-label-tertiary);border-radius:1px;opacity:.6}
 
-/* Tab bar + workspace switcher (Wave-style, ADR-0007) */
 .dmsWinTabs{flex:none;display:flex;align-items:center;gap:4px;padding:4px 8px 0;border-bottom:1px solid var(--wave-border);background:var(--wave-bg);position:relative}
-.dmsWsBtn{flex:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:600;cursor:pointer}
-.dmsWsBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dmsTabList{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;scrollbar-width:none}
 .dmsTabList::-webkit-scrollbar{display:none}
 .dmsTab{flex:none;display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 10px;border-radius:7px 7px 0 0;border:1px solid transparent;border-bottom:none;color:var(--dsw-alias-label-tertiary);font-size:12px;max-width:180px;cursor:default}
@@ -232,20 +229,6 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsTabX:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover)}
 .dmsTabAdd{flex:none;width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;display:grid;place-items:center;padding:0}
 .dmsTabAdd:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dmsWsSwitcher{position:absolute;left:8px;top:34px;z-index:12;width:280px;display:flex;flex-direction:column;background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 10px 32px rgba(0,0,0,.45);padding:6px;overflow:hidden}
-.dmsWsTitle{flex:none;padding:4px 8px 6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary)}
-.dmsWsRow{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer}
-.dmsWsRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dmsWsRow.isActive{background:var(--dsw-alias-interactive-bg-hover)}
-.dmsWsDot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
-.dmsWsName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--dsw-alias-label-secondary)}
-.dmsWsActs{flex:none;display:flex;gap:2px;opacity:0}
-.dmsWsRow:hover .dmsWsActs{opacity:1}
-.dmsWsAct{width:22px;height:22px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;font-size:12px}
-.dmsWsAct:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dmsWsFoot{flex:none;display:flex;gap:6px;padding:6px 2px 2px;border-top:1px solid var(--dsw-alias-border-l1);margin-top:4px}
-.dmsWsNew{flex:1;height:26px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:7px;font-family:Inter,var(--dsw-font-family);font-size:11.5px;cursor:pointer}
-.dmsWsNew:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 
 /* Right sidebar (Wave widget picker, spec #32) */
 .dmsSidebar{position:absolute;top:0;right:0;bottom:0;width:240px;z-index:10;display:flex;flex-direction:column;background:var(--wave-panel);border-left:1px solid var(--wave-border);box-shadow:-8px 0 24px rgba(0,0,0,.3);overflow:hidden}
@@ -1771,7 +1754,6 @@ export function TerminalWindow() {
   const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
   const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
   const { collection, commit } = useWorkspaceState(visible);
-  const [wsOpen, setWsOpen] = React.useState(false);
   const [magnifiedPath, setMagnifiedPath] = React.useState<number[] | null>(null);
   const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -1986,7 +1968,7 @@ export function TerminalWindow() {
       if (!e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
         const target = Number(e.key) - 1;
-        if (target < ws.tabs.length) commit(setActiveTab(collection, wsIdx, target));
+        if (target < collection.tabs.length) commit(setActiveTab(collection, target));
         return;
       }
       if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
@@ -2003,38 +1985,18 @@ export function TerminalWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, collection, tree, activePath]);
 
-  /* ---- workspace + tab operations ---- */
-  const wsIdx = collection.activeWorkspace;
-  const ws = collection.workspaces[wsIdx] ?? collection.workspaces[0];
+  /* ---- tab operations ---- */
   const newTab = () => {
-    const next = addTab(collection, wsIdx);
-    commit(setActiveTab(next, wsIdx, next.workspaces[wsIdx].tabs.length - 1));
+    const next = addTab(collection);
+    commit(setActiveTab(next, next.tabs.length - 1));
   };
   const closeTabAt = (tabIdx: number) => {
-    const [next] = removeTab(collection, wsIdx, tabIdx);
+    const [next] = removeTab(collection, tabIdx);
     commit(next);
   };
   const doRenameTab = (tabIdx: number, name: string) => {
-    commit(renameTab(collection, wsIdx, tabIdx, name));
+    commit(renameTab(collection, tabIdx, name));
     setRenaming(null);
-  };
-  const switchWorkspace = (idx: number) => {
-    commit(setActiveWorkspace(collection, idx));
-    setWsOpen(false);
-  };
-  const newWorkspace = (copy: boolean) => {
-    const name = copy ? "复制布局" : "新工作区";
-    const opts = copy ? { name, copyFrom: wsIdx } : { name };
-    commit(createWorkspace(collection, opts));
-    setWsOpen(false);
-  };
-  const deleteWorkspaceAt = (idx: number) => {
-    commit(removeWorkspace(collection, idx));
-    setWsOpen(false);
-  };
-  const renameWsAt = (idx: number) => {
-    const name = window.prompt("工作区名称", collection.workspaces[idx]?.name ?? "");
-    if (name !== null && name.trim().length > 0) commit(renameWorkspace(collection, idx, name.trim()));
   };
   const removeBlockAt = (path: number[]) => {
     const [next] = layoutRemoveBlock(tree, path);
@@ -2044,7 +2006,7 @@ export function TerminalWindow() {
   /* ---- window chrome: move (clamped) / resize / maximize ---- */
   const startMove = (e: React.PointerEvent) => {
     if (e.button !== 0 || maximized) return;
-    if ((e.target as HTMLElement).closest("button, .dmsTab, .dmsWsBtn, .dmsTabAdd")) return;
+    if ((e.target as HTMLElement).closest("button, .dmsTab, .dmsTabAdd")) return;
     e.preventDefault();
     const sx = e.clientX - win.x;
     const sy = e.clientY - win.y;
@@ -2197,11 +2159,8 @@ export function TerminalWindow() {
       aria-label="SSH 终端"
     >
       <div className="dmsWinTabs" onPointerDown={startMove}>
-        <button className="dmsWsBtn" title="工作区" aria-label="工作区" onClick={() => setWsOpen((v) => !v)}>
-          {Icon.terminal()} {ws.name}
-        </button>
         <div className="dmsTabList" role="tablist">
-          {ws.tabs.map((t, i) => (
+          {collection.tabs.map((t, i) => (
             <span
               key={i}
               className={"dmsTab" + (i === ws.activeTab ? " isActive" : "")}
@@ -2223,8 +2182,8 @@ export function TerminalWindow() {
                 <button
                   className="dmsTabName"
                   role="tab"
-                  aria-selected={i === ws.activeTab}
-                  onClick={() => commit(setActiveTab(collection, wsIdx, i))}
+                  aria-selected={i === collection.activeTab}
+                  onClick={() => commit(setActiveTab(collection, i))}
                 >
                   {t.name}
                 </button>
@@ -2263,53 +2222,23 @@ export function TerminalWindow() {
             {Icon.close()}
           </button>
         </span>
-        {wsOpen && (
-          <div className="dmsWsSwitcher">
-            <div className="dmsWsTitle">工作区</div>
-            {collection.workspaces.map((w, i) => (
-              <div
-                key={i}
-                className={"dmsWsRow" + (i === wsIdx ? " isActive" : "")}
-                onClick={() => switchWorkspace(i)}
-              >
-                <span className="dmsWsDot" style={w.color ? { background: w.color } : undefined} />
-                <span className="dmsWsName">{w.name}</span>
-                <span className="dmsWsActs">
-                  <button
-                    className="dmsWsAct"
-                    title="重命名"
-                    aria-label="重命名工作区"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      renameWsAt(i);
-                    }}
-                  >
-                    ✎
-                  </button>
-                  <button
-                    className="dmsWsAct"
-                    title="删除工作区（仅布局，会话保留）"
-                    aria-label="删除工作区"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteWorkspaceAt(i);
-                    }}
-                  >
-                    {Icon.trash()}
-                  </button>
-                </span>
-              </div>
-            ))}
-            <div className="dmsWsFoot">
-              <button className="dmsWsNew" onClick={() => newWorkspace(false)}>
-                {Icon.plus()} 新建（空模板）
-              </button>
-              <button className="dmsWsNew" onClick={() => newWorkspace(true)}>
-                复制当前布局
-              </button>
-            </div>
-          </div>
-        )}
+        <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
+          <button className={"dmsWinAction" + (sidebarOpen ? " isOn" : "")} title="Widgets（服务器 / 未放置会话）" aria-label="Widgets" onClick={() => setSidebarOpen((v) => !v)}>
+            {Icon.list()}
+          </button>
+          <button className="dmsWinAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
+            {Icon.gear()}
+          </button>
+          <button className="dmsWinAction" title={"终端主题：" + OVERRIDE_LABEL[override]} aria-label="终端主题" onClick={cycleOverride}>
+            {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
+          </button>
+          <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
+            {maximized ? Icon.minimize() : Icon.maximize()}
+          </button>
+          <button className="dmsWinAction" title="收起（Esc）" aria-label="收起" onClick={() => setTerminalVisible(false)}>
+            {Icon.close()}
+          </button>
+        </span>
       </div>
       <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
         <SplitTreeView
