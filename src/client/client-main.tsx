@@ -175,7 +175,9 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsFocusExit{flex:none;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
 .dmsFocusExit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 /* Terminal Window (shell.overlay, ADR-0006) */
-.dmsWin{position:fixed;z-index:80;display:flex;flex-direction:column;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.35);overflow:hidden;font-family:Inter,var(--dsw-font-family)}
+.dmsWin{position:fixed;z-index:80;display:flex;flex-direction:column;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.35);overflow:hidden;font-family:Inter,var(--dsw-font-family);transition:left .18s ease,top .18s ease,width .18s ease,height .18s ease,border-radius .18s ease}
+.dmsWin.isMoving{transition:none}
+@media (prefers-reduced-motion:reduce){.dmsWin{transition:none}}
 .dmsWin.isMax{left:0!important;top:0!important;width:100%!important;height:100%!important;border-radius:0;border:none}
 .dmsWin.isBlur .dmsWinBar,.dmsWin.isBlur .dmsWinTool{opacity:.55}
 .dmsWin.isBlur .dmsWinBody{box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2)}
@@ -1401,6 +1403,28 @@ function BlockView({
   const tab = sessionId !== null ? tabs.find((t) => t.id === sessionId) : undefined;
   const ref = React.useRef<HTMLDivElement>(null);
   const isDraggingThis = drag !== null && samePath(drag.fromPath, path);
+  // a press only becomes a drag after moving > 4px — clicking the bar to
+  // focus must not start a drag (and must not flash drop previews)
+  const pendingDragRef = React.useRef<{ x: number; y: number; path: number[]; sessionId: string } | null>(null);
+  React.useEffect(() => {
+    const move = (ev: PointerEvent) => {
+      const p = pendingDragRef.current;
+      if (p === null || drag !== null) return;
+      if (Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 4) {
+        pendingDragRef.current = null;
+        onDrag({ fromPath: p.path, sessionId: p.sessionId, hover: null, start: { x: p.x, y: p.y } });
+      }
+    };
+    const up = () => {
+      pendingDragRef.current = null;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [drag, onDrag]);
   // hover classification for this block while a drag is in flight
   const myHover =
     drag !== null && !isDraggingThis && drag.hover !== null && samePath(drag.hover.path, path)
@@ -1425,12 +1449,12 @@ function BlockView({
     (myHover === "swap" ? " isSwapTarget" : "") +
     (myHover !== null && myHover !== "swap" ? " isDrop-" + myHover : "") +
     (isDraggingThis ? " isDragging" : "");
-  // drag start: from the title bar (not buttons)
+  // drag start: from the title bar (not buttons); engaged after 4px
   const startBlockDrag = (e: React.PointerEvent) => {
     if (e.button !== 0 || sessionId === null) return;
     if ((e.target as HTMLElement).closest("button")) return;
     e.preventDefault();
-    onDrag({ fromPath: path, sessionId, hover: null, start: { x: e.clientX, y: e.clientY } });
+    pendingDragRef.current = { x: e.clientX, y: e.clientY, path, sessionId };
   };
   // drop handling: swap or edge-split are applied by the parent on pointerup;
   // here we classify hover as the pointer moves over this block.
@@ -1659,7 +1683,11 @@ export function TerminalWindow() {
   const [focused, setFocused] = React.useState(true);
   const [opening, setOpening] = React.useState(false);
   const [drag, setDrag] = React.useState<DragState | null>(null);
+  const [moving, setMoving] = React.useState(false);
   const bodyRef = React.useRef<HTMLDivElement>(null);
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const movedRef = React.useRef(false);
+  const lastClickRef = React.useRef<{ t: number; x: number; y: number } | null>(null);
 
   /* ---- world state: sessions + servers (projections of host truth) ---- */
   React.useEffect(() => {
@@ -1737,25 +1765,36 @@ export function TerminalWindow() {
     };
   }, [visible]);
 
-  /* ---- block drag: swap (centre) or edge-split, RGB preview live ---- */
+  /* ---- block drag: swap (centre) or edge-split, RGB preview live ----
+   * Dragging out of the window cancels: the hover preview clears and a drop
+   * outside never commits. */
   React.useEffect(() => {
     if (drag === null) return;
-    const up = () => {
-      if (drag !== null) {
-        if (drag.hover !== null) {
-          if (drag.hover.zone === "swap") {
-            commitTree(treeSwapSessions(tree, drag.fromPath, drag.hover.path));
-          } else {
-            const dir = drag.hover.zone === "left" || drag.hover.zone === "right" ? "h" : "v";
-            const newFirst = drag.hover.zone === "left" || drag.hover.zone === "top";
-            commitTree(treeSplit(tree, drag.hover.path, dir, drag.sessionId, newFirst));
-          }
-        }
-        setDrag(null);
+    const inWindow = (target: EventTarget | null) =>
+      rootRef.current !== null && target instanceof Node && rootRef.current.contains(target);
+    const move = (e: PointerEvent) => {
+      if (!inWindow(e.target)) {
+        if (drag.hover !== null) setDrag({ ...drag, hover: null });
       }
     };
+    const up = (e: PointerEvent) => {
+      if (drag !== null && drag.hover !== null && inWindow(e.target)) {
+        if (drag.hover.zone === "swap") {
+          commitTree(treeSwapSessions(tree, drag.fromPath, drag.hover.path));
+        } else {
+          const dir = drag.hover.zone === "left" || drag.hover.zone === "right" ? "h" : "v";
+          const newFirst = drag.hover.zone === "left" || drag.hover.zone === "top";
+          commitTree(treeSplit(tree, drag.hover.path, dir, drag.sessionId, newFirst));
+        }
+      }
+      setDrag(null);
+    };
+    window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
-    return () => window.removeEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
   }, [drag, tree, commitTree]);
 
   /* ---- Esc: exit maximized first, then close the window ---- */
@@ -1777,7 +1816,11 @@ export function TerminalWindow() {
     e.preventDefault();
     const sx = e.clientX - win.x;
     const sy = e.clientY - win.y;
+    let moved = false;
+    setMoving(true);
     const move = (ev: PointerEvent) => {
+      if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > 4) moved = true;
+      if (!moved) return;
       const x = Math.min(Math.max(0, ev.clientX - sx), Math.max(0, window.innerWidth - 60));
       const y = Math.min(Math.max(0, ev.clientY - sy), Math.max(0, window.innerHeight - 36));
       setWin((w) => ({ ...w, x, y }));
@@ -1785,6 +1828,9 @@ export function TerminalWindow() {
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      setMoving(false);
+      // a real drag must not count as a double-click on release
+      movedRef.current = moved;
       setWin((w) => {
         saveWin(w);
         return w;
@@ -1801,6 +1847,7 @@ export function TerminalWindow() {
     const sy = e.clientY;
     const sw = win.w;
     const sh = win.h;
+    setMoving(true);
     const move = (ev: PointerEvent) => {
       const w = Math.max(480, Math.min(window.innerWidth - 24, sw + (ev.clientX - sx)));
       const h = Math.max(320, Math.min(window.innerHeight - 24, sh + (ev.clientY - sy)));
@@ -1809,6 +1856,7 @@ export function TerminalWindow() {
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      setMoving(false);
       setWin((w) => {
         saveWin(w);
         return w;
@@ -1819,6 +1867,27 @@ export function TerminalWindow() {
   };
 
   const toggleMax = () => setTerminalMaximized(!getTerminalMaximized());
+  /** Self-rolled double-click: two clicks < 300ms apart and < 4px apart.
+   *  A just-finished drag suppresses the click entirely. */
+  const onBarClick = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    if (movedRef.current) {
+      movedRef.current = false;
+      return;
+    }
+    const now = Date.now();
+    const prev = lastClickRef.current;
+    if (
+      prev !== null &&
+      now - prev.t < 300 &&
+      Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 4
+    ) {
+      lastClickRef.current = null;
+      toggleMax();
+      return;
+    }
+    lastClickRef.current = { t: now, x: e.clientX, y: e.clientY };
+  };
 
   /* ---- tree mutations ---- */
   const focusBlock = (path: number[]) => setActivePath(path);
@@ -1896,13 +1965,14 @@ export function TerminalWindow() {
 
   return (
     <div
-      className={"dmsWin" + (maximized ? " isMax" : "") + (focused ? "" : " isBlur") + (opening ? " isOpening" : "")}
+      ref={rootRef}
+      className={"dmsWin" + (maximized ? " isMax" : "") + (focused ? "" : " isBlur") + (opening ? " isOpening" : "") + (moving ? " isMoving" : "")}
       style={maximized ? undefined : { left: win.x, top: win.y, width: win.w, height: win.h }}
       onPointerDown={() => setFocused(true)}
       role="dialog"
       aria-label="SSH 终端"
     >
-      <div className="dmsWinBar" onPointerDown={startMove} onDoubleClick={toggleMax}>
+      <div className="dmsWinBar" onPointerDown={startMove} onClick={onBarClick}>
         <span className="dmsWinTitle">{Icon.terminal()} SSH 终端{stateLabel !== "" ? " · " + stateLabel : ""}</span>
         <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
           <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
