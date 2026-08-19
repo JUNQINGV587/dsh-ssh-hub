@@ -219,7 +219,7 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsTabList::-webkit-scrollbar{display:none}
 .dmsTab{flex:none;display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 10px;border-radius:7px 7px 0 0;border:1px solid transparent;border-bottom:none;color:var(--dsw-alias-label-tertiary);font-size:12px;max-width:180px;cursor:default}
 .dmsTab:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dmsTab.isActive{background:var(--dms-bg,#1e2128);border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary)}
+.dmsTab.isActive{background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary)}
 .dmsTabName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;border:none;color:inherit;font:inherit;cursor:pointer;padding:0}
 .dmsTabEdit{width:120px;height:22px;border:1px solid var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));border-radius:5px;background:var(--dsw-bg-input,transparent);color:var(--dsw-alias-label-primary);font:inherit;padding:0 6px;outline:none}
 .dmsTabX{flex:none;width:18px;height:18px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;opacity:0}
@@ -277,8 +277,8 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsSplitBtn-top:hover{color:#4cc2ff}
 .dmsSplitBtn-bottom:hover{color:#4c8dff}
 .dmsBlockRemove:hover{background:rgba(231,72,86,.2);color:#ff8b93}
-.dmsBlockEmpty{position:absolute;inset:26px 0 0;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12.5px;cursor:pointer;background:transparent;border:none;width:100%}
-.dmsBlockEmpty:hover{color:var(--dmst-picker-item-fg,#e6e8ee)}
+.dmsBlockEmpty{position:absolute;inset:26px 0 0;display:flex;align-items:center;justify-content:center;background:transparent;width:100%;cursor:pointer}
+.dmsBlockEmpty:hover{background:var(--dsw-alias-interactive-bg-hover)}
 
 /* Session list panel */
 .dmsListPanel{position:absolute;right:8px;bottom:8px;top:8px;width:260px;z-index:8;display:flex;flex-direction:column;background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.5);overflow:hidden}
@@ -1599,9 +1599,13 @@ function BlockView({
         </span>
       </div>
       {sessionId === null ? (
-        <button className="dmsBlockEmpty" onClick={() => onEmptyClick(path)}>
-          {Icon.plus()} 放入会话
-        </button>
+        <div
+          className="dmsBlockEmpty"
+          title="空块"
+          onClick={() => onEmptyClick(path)}
+        >
+          <span className="dmsBlockEmptyHint" aria-hidden />
+        </div>
       ) : (
         <XtermPane tab={tab ?? { id: sessionId, serverId: "", label: "…", status: "connecting" }} active={true} surface="window" onStatus={(patch) => onStatus(sessionId, patch)} />
       )}
@@ -1779,6 +1783,9 @@ export function TerminalWindow() {
   const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
   const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
   const { collection, commit } = useWorkspaceState(visible);
+  const [wsOpen, setWsOpen] = React.useState(false);
+  const [magnifiedPath, setMagnifiedPath] = React.useState<number[] | null>(null);
+  const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
   /** The active (workspace, tab) tree and a commit that writes it back.
    *  When a block is magnified, the rendered tree is that subtree and writes
    *  land back at its path (splitting inside a magnified block mutates the
@@ -1802,9 +1809,6 @@ export function TerminalWindow() {
       return restoring ? null : path;
     });
   };
-  const [wsOpen, setWsOpen] = React.useState(false);
-  const [magnifiedPath, setMagnifiedPath] = React.useState<number[] | null>(null);
-  const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
 
   const [tabs, setTabs] = React.useState<TermTab[]>([]);
