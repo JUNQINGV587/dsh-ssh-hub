@@ -1796,7 +1796,11 @@ export function TerminalWindow() {
     [collection, commit, magnifiedPath, tree],
   );
   const toggleMagnify = (path: number[]) => {
-    setMagnifiedPath((cur) => (cur !== null && samePath(cur, path) ? null : path));
+    setMagnifiedPath((cur) => {
+      const restoring = cur !== null && samePath(cur, path);
+      if (restoring) setActivePath(null); // subtree-relative path is stale in the main view
+      return restoring ? null : path;
+    });
   };
   const [wsOpen, setWsOpen] = React.useState(false);
   const [magnifiedPath, setMagnifiedPath] = React.useState<number[] | null>(null);
@@ -2020,7 +2024,10 @@ export function TerminalWindow() {
   /* ---- workspace + tab operations ---- */
   const wsIdx = collection.activeWorkspace;
   const ws = collection.workspaces[wsIdx] ?? collection.workspaces[0];
-  const newTab = () => commit(addTab(collection, wsIdx));
+  const newTab = () => {
+    const next = addTab(collection, wsIdx);
+    commit(setActiveTab(next, wsIdx, next.workspaces[wsIdx].tabs.length - 1));
+  };
   const closeTabAt = (tabIdx: number) => {
     const [next] = removeTab(collection, wsIdx, tabIdx);
     commit(next);
