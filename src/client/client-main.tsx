@@ -1731,6 +1731,15 @@ function ItemsView({
   const [bcastText, setBcastText] = React.useState("");
   const [flashSet, setFlashSet] = React.useState<Set<number>>(new Set());
   const flashTimer = React.useRef<number | null>(null);
+  /** UX-0002: last broadcast — "已发送到 N 个成员" + undo. */
+  const [sentInfo, setSentInfo] = React.useState<{ count: number; targets: number[] } | null>(null);
+  const sentTimer = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    return () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+      if (sentTimer.current !== null) window.clearTimeout(sentTimer.current);
+    };
+  }, []);
   // #41: member drop position indicator (before / after / swap).
   const [memberDrop, setMemberDrop] = React.useState<{ idx: number; side: "before" | "after" | "swap" } | null>(null);
   React.useEffect(() => {
@@ -1784,6 +1793,7 @@ function ItemsView({
       setBcastOn(false);
       setBcastSel(new Set());
       setBcastText("");
+      setSentInfo(null);
     }
   }, [itKind]);
   const sendBroadcast = () => {
@@ -1805,6 +1815,24 @@ function ItemsView({
     if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
     flashTimer.current = window.setTimeout(() => setFlashSet(new Set()), 600);
     setBcastText("");
+    // UX-0002: confirm what just went out and offer an undo (Ctrl+C to all).
+    setSentInfo({ count: targets.length, targets });
+    if (sentTimer.current !== null) window.clearTimeout(sentTimer.current);
+    sentTimer.current = window.setTimeout(() => setSentInfo(null), 5000);
+  };
+  const undoBroadcast = () => {
+    if (sentInfo === null) return;
+    const wsItem = collection.items[collection.activeIndex];
+    if (wsItem?.kind === "workspace") {
+      for (const i of sentInfo.targets) {
+        const m = wsItem.members[i];
+        if (m === undefined) continue;
+        const w = wsRegistry.get(m.sessionId);
+        if (w !== undefined && w.readyState === WebSocket.OPEN) w.send("\x03"); // Ctrl+C
+      }
+    }
+    if (sentTimer.current !== null) window.clearTimeout(sentTimer.current);
+    setSentInfo(null);
   };
   const it = collection.items[collection.activeIndex] ?? null;
   if (it === null) {
@@ -1940,28 +1968,43 @@ function ItemsView({
       )}
       {bcastOn && magnifiedMember === null && (
         <div className="dmsBcastBar">
-          <span className="dmsBcastHint">
-            {bcastSel.size === 0 ? "点击成员选择目标" : `发送到 ${bcastSel.size} 个成员`}
-          </span>
-          <input
-            className="dmsBcastInput"
-            value={bcastText}
-            onChange={(e) => setBcastText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") sendBroadcast();
-              if (e.key === "Escape") setBcastOn(false);
-            }}
-            placeholder="输入命令，Enter 发送"
-            autoFocus
-            aria-label="广播输入"
-          />
-          <button className="dmsBcastSend" onClick={sendBroadcast} disabled={bcastSel.size === 0 || bcastText.trim().length === 0}>
-            发送
-          </button>
-          <button className="dmsBcastCancel" onClick={() => setBcastOn(false)}>
-            退出
-          </button>
+          {sentInfo !== null ? (
+            <>
+              <span className="dmsBcastHint">已发送到 {sentInfo.count} 个成员</span>
+              <button className="dmsBcastCancel" onClick={undoBroadcast} title="向这些成员发送 Ctrl+C">
+                撤销
+              </button>
+              <button className="dmsBcastCancel" onClick={() => setSentInfo(null)}>
+                继续输入
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="dmsBcastHint">{bcastSel.size === 0 ? "点击成员选择目标" : `发送到 ${bcastSel.size} 个成员`}</span>
+              <input
+                className="dmsBcastInput"
+                value={bcastText}
+                onChange={(e) => setBcastText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendBroadcast();
+                  if (e.key === "Escape") setBcastOn(false);
+                }}
+                placeholder="输入命令，Enter 发送"
+                autoFocus
+                aria-label="广播输入"
+              />
+              <button className="dmsBcastSend" onClick={sendBroadcast} disabled={bcastSel.size === 0 || bcastText.trim().length === 0}>
+                发送
+              </button>
+              <button className="dmsBcastCancel" onClick={() => setBcastOn(false)}>
+                退出
+              </button>
+            </>
+          )}
         </div>
+      )}
+      {memberDragFrom !== null && (
+        <div className="dmsEscHint">拖到成员前 / 后 / 中间排序 · 拖到标签栏变回独立标签</div>
       )}
     </div>
   );
@@ -2872,6 +2915,7 @@ function TerminalWindowFrame() {
             <span
               key={i}
               className={"dmsTab" + (i === collection.activeIndex ? " isActive" : "") + (it.kind === "workspace" ? " isGroup" : "") + (tabDropTarget === i ? " isDropTarget" : "")}
+              title={it.kind === "workspace" ? "拖标签到此处追加成员" : "拖到另一标签合并成组"}
               draggable={renaming === null || renaming.tab !== i}
               onDragStart={(e) => {
                 // only a session tab can be merged (empty/group tabs cannot)
@@ -3075,6 +3119,7 @@ function TerminalWindowFrame() {
         </WindowBodyErrorBoundary>
       </div>
       {(magnifiedMember !== null || maximized) && <div className="dmsEscHint">按 Esc 还原</div>}
+      {dragTabFrom !== null && <div className="dmsEscHint">拖到另一标签合并成组 · 拖到组合标签追加成员</div>}
       {groupPick !== null && (
         <div className="dmsGroupPicker">
           <div className="dmsGroupPickerHead">选择会话创建组合（并排）</div>
