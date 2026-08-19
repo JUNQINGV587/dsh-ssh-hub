@@ -1568,7 +1568,7 @@ function BlockView({
     >
       <div
         className="dmsBlockBar"
-        title={sessionId !== null ? tab?.label ?? sessionId : "空块（点击放入会话）"}
+        title={sessionId !== null ? tab?.label ?? sessionId : "空块"}
         onPointerDown={startBlockDrag}
         onDoubleClick={(e) => {
           if ((e.target as HTMLElement).closest("button")) return;
@@ -1579,7 +1579,7 @@ function BlockView({
           <span className={dotClass} />
         </span>
         <span className="dmsBlockNum">{number}</span>
-        <span className="dmsBlockLabel">{sessionId !== null ? tab?.label ?? sessionId : "点击放入会话"}</span>
+        <span className="dmsBlockLabel">{sessionId !== null ? tab?.label ?? sessionId : "空"}</span>
         <span className="dmsBlockActions">
           <button
             className="dmsSplitBtn"
