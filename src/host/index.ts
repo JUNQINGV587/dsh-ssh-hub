@@ -30,7 +30,7 @@ import type { ServerConfig, ServerDefaults, TerminalSession, TestResult } from "
 import { ServerStore, resolveDshHome, serverFromInput, SECRET_FIELDS, type ServerInput } from "./store.js";
 import { testConnection, createShellSession } from "./connection.js";
 import { SessionRegistry } from "./registry.js";
-import { defaultCollection, normalizeCollection, emptySessionFromAll } from "../shared/workspace.mjs";
+import { defaultCollection, normalizeCollection, migrateLegacy } from "../shared/group.mjs";
 
 const PREFIX = "/ssh-hub";
 /** Default idle reclaim for a session with no attached clients (ADR-0004). */
@@ -146,22 +146,25 @@ export function apply(ctx: any, config: any) {
   /** Clients subscribed to workspace/events. */
   const workspaceClients = new Set<WebSocket>();
 
-  /** Validate a client-supplied collection; leaves pointing at unknown
-   *  sessions are emptied (the host is authoritative). */
+  /** Validate a client-supplied collection: legacy shapes (two/three-layer
+   *  with trees) flatten to tabs, then dead sessions are dropped (the host is
+   *  authoritative — an item pointing at a gone session is garbage). */
   function sanitizeWorkspaces(input: any) {
-    const collection = normalizeCollection(input);
-    const walk = (node: any): any => {
-      if (node.kind === "block") {
-        const sessionId =
-          node.sessionId !== null && registry.get(node.sessionId) === undefined ? null : node.sessionId;
-        return { kind: "block", sessionId };
-      }
-      return { ...node, children: (node.children ?? []).map(walk) };
-    };
-    return {
-      tabs: collection.tabs.map((t: any) => ({ ...t, tree: walk(t.tree) })),
-      activeTab: collection.activeTab,
-    };
+    const migrated = Array.isArray(input?.items) ? input : migrateLegacy(input);
+    const collection = normalizeCollection(migrated);
+    const alive = (id: any) => typeof id === "string" && registry.get(id) !== undefined;
+    const items = collection.items
+      .map((it: any) => {
+        if (it.kind === "tab") return alive(it.sessionId) ? it : null;
+        if (it.kind === "workspace") {
+          const members = it.members.filter((m: any) => alive(m.sessionId));
+          const sizes = it.sizes.slice(0, members.length);
+          return members.length === 0 ? null : { ...it, members, sizes };
+        }
+        return null;
+      })
+      .filter((it: any) => it !== null);
+    return { items, activeIndex: Math.min(collection.activeIndex, Math.max(0, items.length - 1)) };
   }
 
   function broadcastWorkspaces() {
@@ -171,11 +174,21 @@ export function apply(ctx: any, config: any) {
     }
   }
 
-  /** A session left the registry: empty its leaves everywhere and broadcast. */
+  /** A session left the registry: drop it from every item and broadcast. */
   function clearSessionFromWorkspaces(id: string) {
-    const next = emptySessionFromAll(workspaceState, id);
-    if (next !== workspaceState) {
-      workspaceState = next;
+    const items = workspaceState.items
+      .map((it: any) => {
+        if (it.kind === "tab" && it.sessionId === id) return null;
+        if (it.kind === "workspace") {
+          const members = it.members.filter((m: any) => m.sessionId !== id);
+          const sizes = it.sizes.slice(0, members.length);
+          return members.length === 0 ? null : { ...it, members, sizes };
+        }
+        return it;
+      })
+      .filter((it: any) => it !== null);
+    if (items.length !== workspaceState.items.length || items.some((it: any, i: number) => it !== workspaceState.items[i])) {
+      workspaceState = { items, activeIndex: Math.min(workspaceState.activeIndex, Math.max(0, items.length - 1)) };
       broadcastWorkspaces();
     }
   }

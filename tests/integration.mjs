@@ -550,49 +550,60 @@ check("explicitly closed session gone", !afterDel.body?.sessions?.some((s) => s.
 const delAgain = await req(`/ssh-hub/sessions/${sessionId2}`, "DELETE");
 check("DELETE missing -> 404", delAgain.status === 404);
 
-console.log("4d. workspace collection (two-layer, ADR-0007 revision)");
+console.log("4d. workspace items model (spec #38)");
 const ws0 = await req("/ssh-hub/workspace");
 check(
-  "GET /workspace starts with one empty-block tab",
-  ws0.body?.workspace?.tabs?.length === 1 &&
-    ws0.body?.workspace?.tabs?.[0]?.tree?.kind === "block" &&
-    ws0.body?.workspace?.tabs?.[0]?.tree?.sessionId === null,
+  "GET /workspace starts with no items",
+  ws0.body?.workspace?.items?.length === 0 && ws0.body?.workspace?.activeIndex === 0,
   JSON.stringify(ws0.body),
 );
 
 const gsess = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
 const gsid = gsess.body?.id;
 check("workspace fixture session opened", typeof gsid === "string");
+// keep it alive across the section (no-client sessions are reclaimed after 3s)
+const gkeep = await collectWs(gsid);
+const gsess2 = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
+const gsid2 = gsess2.body?.id;
+const gkeep2 = await collectWs(gsid2);
 
-// PUT a collection: a tab with a row-list holding A and an empty block.
-const listTree = { kind: "list", dir: "row", sizes: [1, 1], children: [{ kind: "block", sessionId: gsid }, { kind: "block", sessionId: null }] };
-const coll = { tabs: [{ name: "T", tree: listTree }], activeTab: 0 };
+// PUT items: one tab holding A, one workspace with two members (A + empty placeholder impossible — members must be live).
+const coll = {
+  items: [
+    { kind: "tab", sessionId: gsid, name: "单" },
+    { kind: "workspace", name: "组", orientation: "h", members: [{ sessionId: gsid2, name: "g1" }], sizes: [1] },
+  ],
+  activeIndex: 0,
+};
 const tp = await req("/ssh-hub/workspace", "PUT", coll);
 check(
-  "PUT /workspace saves the collection",
-  tp.body?.workspace?.tabs?.[0]?.tree?.kind === "list" && tp.body?.workspace?.tabs?.[0]?.tree?.children?.[0]?.sessionId === gsid,
+  "PUT /workspace saves items",
+  tp.body?.workspace?.items?.length === 2 && tp.body?.workspace?.items?.[0]?.sessionId === gsid && tp.body?.workspace?.items?.[1]?.kind === "workspace",
   JSON.stringify(tp.body),
 );
 const ws1 = await req("/ssh-hub/workspace");
-check("GET /workspace returns saved state", ws1.body?.workspace?.tabs?.[0]?.tree?.children?.[0]?.sessionId === gsid, JSON.stringify(ws1.body));
+check("GET /workspace returns saved items", ws1.body?.workspace?.items?.[0]?.sessionId === gsid, JSON.stringify(ws1.body));
 
-// Unknown sessions in blocks are emptied; legacy three-layer state migrates
-// by promoting the active workspace's tabs; garbage repairs to a default.
+// Unknown sessions are dropped (tab removed; workspace member dropped; empty workspace removed).
 const gdead = await req("/ssh-hub/workspace", "PUT", {
-  tabs: [{ name: "T", tree: { kind: "list", dir: "row", sizes: [1, 1], children: [{ kind: "block", sessionId: "ghost" }, { kind: "block", sessionId: gsid }] } }],
+  items: [
+    { kind: "tab", sessionId: "ghost", name: "g" },
+    { kind: "tab", sessionId: gsid, name: "ok" },
+    { kind: "workspace", name: "W", orientation: "h", members: [{ sessionId: "ghost", name: "g" }], sizes: [1] },
+  ],
+  activeIndex: 0,
+});
+check("dead tabs and members are dropped", gdead.body?.workspace?.items?.length === 1 && gdead.body?.workspace?.items?.[0]?.sessionId === gsid, JSON.stringify(gdead.body));
+
+// Legacy shapes flatten: two-layer tabs with trees become one tab per leaf session.
+const glegacy = await req("/ssh-hub/workspace", "PUT", {
+  tabs: [
+    { name: "单", tree: { kind: "block", sessionId: gsid } },
+    { name: "组", tree: { kind: "list", dir: "row", sizes: [1, 1], children: [{ kind: "block", sessionId: gsid }, { kind: "block", sessionId: null }] } },
+  ],
   activeTab: 0,
 });
-check("PUT /workspace empties unknown session blocks", gdead.body?.workspace?.tabs?.[0]?.tree?.children?.[0]?.sessionId === null && gdead.body?.workspace?.tabs?.[0]?.tree?.children?.[1]?.sessionId === gsid, JSON.stringify(gdead.body));
-const glegacy = await req("/ssh-hub/workspace", "PUT", {
-  workspaces: [
-    { name: "W1", icon: null, color: null, tabs: [{ name: "Ta", tree: { kind: "block", sessionId: "X" } }], activeTab: 0 },
-    { name: "W2", icon: null, color: null, tabs: [{ name: "Tb", tree: { kind: "split", dir: "h", ratio: 0.5, a: { kind: "leaf", sessionId: "X" }, b: { kind: "leaf", sessionId: null } } }], activeTab: 0 },
-  ],
-  activeWorkspace: 1,
-});
-check("legacy three-layer promotes active tabs and resets binary trees", glegacy.body?.workspace?.tabs?.length === 1 && glegacy.body?.workspace?.tabs?.[0]?.name === "Tb" && glegacy.body?.workspace?.tabs?.[0]?.tree?.kind === "block" && glegacy.body?.workspace?.tabs?.[0]?.tree?.sessionId === null, JSON.stringify(glegacy.body));
-const gbad = await req("/ssh-hub/workspace", "PUT", { banana: true });
-check("PUT /workspace repairs garbage to a default collection", gbad.status === 200 && gbad.body?.workspace?.tabs?.length === 1 && gbad.body?.workspace?.tabs?.[0]?.tree?.kind === "block", JSON.stringify(gbad.body));
+check("legacy tree tabs flatten to one tab per live session", glegacy.body?.workspace?.items?.every((it) => it.kind === "tab") && glegacy.body?.workspace?.items?.length === 1, JSON.stringify(glegacy.body));
 
 // ws broadcast: connect, then PUT, expect the new state pushed.
 const gws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/workspace/events`);
@@ -610,13 +621,13 @@ await new Promise((res, rej) => {
   });
 });
 await new Promise((r) => setTimeout(r, 300));
-// The initial frame reflects the last PUT (garbage repair reset to default).
-check("workspace ws receives initial state", wsEvents.length >= 1 && wsEvents[0]?.tabs?.[0]?.tree?.kind === "block" && wsEvents[0]?.tabs?.[0]?.tree?.sessionId === null, JSON.stringify(wsEvents));
-const coll2 = { tabs: [{ name: "T", tree: { kind: "block", sessionId: gsid } }], activeTab: 0 };
-await req("/ssh-hub/workspace", "PUT", coll2);
+check("workspace ws receives initial state", wsEvents.length >= 1 && Array.isArray(wsEvents[0]?.items), JSON.stringify(wsEvents));
+await req("/ssh-hub/workspace", "PUT", { items: [{ kind: "tab", sessionId: gsid, name: "only" }, { kind: "tab", sessionId: gsid2, name: "only2" }], activeIndex: 0 });
 await new Promise((r) => setTimeout(r, 300));
-check("workspace ws receives broadcast after PUT", wsEvents.some((e) => e?.tabs?.[0]?.tree?.kind === "block" && e?.tabs?.[0]?.tree?.sessionId === gsid), JSON.stringify(wsEvents));
+check("workspace ws receives broadcast after PUT", wsEvents.some((e) => e?.items?.[0]?.sessionId === gsid && e.items.length === 1), JSON.stringify(wsEvents));
 gws.close();
+gkeep.ws.close();
+gkeep2.ws.close();
 
 // Migration: the old single-tree endpoints are gone.
 const mig = await req("/ssh-hub/tree");
@@ -626,7 +637,11 @@ check("old /tree returns 404 (migration)", mig.status === 404);
 const gdel = await req(`/ssh-hub/sessions/${gsid}`, "DELETE");
 check("workspace fixture session deleted", gdel.body?.ok === true);
 const g2 = await req("/ssh-hub/workspace");
-check("deleting a session empties its leaves", g2.body?.workspace?.tabs?.[0]?.tree?.sessionId === null, JSON.stringify(g2.body));
+check("deleting a session drops its item", g2.body?.workspace?.items?.length === 1 && g2.body?.workspace?.items?.[0]?.sessionId === gsid2, JSON.stringify(g2.body));
+const gdel2 = await req(`/ssh-hub/sessions/${gsid2}`, "DELETE");
+check("second fixture session deleted", gdel2.body?.ok === true);
+const g3 = await req("/ssh-hub/workspace");
+check("deleting both sessions empties all items", g3.body?.workspace?.items?.length === 0, JSON.stringify(g3.body));
 
 console.log("4e. unattached sessions are reclaimed too");
 // A session that never had a WebSocket attached must still hit the idle
