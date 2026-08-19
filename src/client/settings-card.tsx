@@ -58,11 +58,13 @@ const SCHEMA_DEFAULTS: Record<string, number | boolean | string> = {
   defaultKeepaliveIntervalSec: 30,
   defaultStrictHostKey: false,
   defaultTerminalTheme: "auto",
+  idleReclaimSec: 30,
 };
 
 const RANGES: Record<string, { min: number; max: number }> = {
   defaultReadyTimeoutSec: { min: 3, max: 120 },
   defaultKeepaliveIntervalSec: { min: 0, max: 300 },
+  idleReclaimSec: { min: 1, max: 120 },
 };
 
 const THEME_OPTIONS = ["auto", "dark", "light"] as const;
@@ -72,6 +74,7 @@ const FIELD_LABELS: Record<string, string> = {
   defaultKeepaliveIntervalSec: "Keepalive 间隔（秒）",
   defaultStrictHostKey: "严格主机密钥校验",
   defaultTerminalTheme: "默认终端主题",
+  idleReclaimSec: "会话回收时长（分钟）",
 };
 
 const FIELD_HINTS: Record<string, string> = {
@@ -79,6 +82,7 @@ const FIELD_HINTS: Record<string, string> = {
   defaultKeepaliveIntervalSec: "0 表示禁用。服务器未单独设置时使用。",
   defaultStrictHostKey: "开启后，未单独设置的服务器将要求 known-hosts 条目，没有条目的服务器将无法连接。",
   defaultTerminalTheme: "浏览器本地主题覆盖为「跟随界面」时使用的终端主题；本地深色/浅色优先于此处。",
+  idleReclaimSec: "会话无人查看（所有视口都关闭）超过此时长后会被回收，回收后需重新连接（1–120 分钟）。",
 };
 
 /* ---------------- styles ------------------------------------------------ */
@@ -364,7 +368,7 @@ export function SettingsCard() {
       {open && (
         <div className="dmscBody">
           <div className="dmscFields">
-        {(["defaultReadyTimeoutSec", "defaultKeepaliveIntervalSec"] as const).map((field) => (
+        {(["defaultReadyTimeoutSec", "defaultKeepaliveIntervalSec", "idleReclaimSec"] as const).map((field) => (
           <div className="dmscField" key={field}>
             <div className="dmscHead">
               <div className="dmscLabel">{FIELD_LABELS[field]}</div>
@@ -390,7 +394,9 @@ export function SettingsCard() {
               <p className="dmscErr">
                 {field === "defaultReadyTimeoutSec"
                   ? "请输入 3–120 的整数（秒）。"
-                  : "请输入 0–300 的整数（秒），0 为禁用。"}
+                  : field === "idleReclaimSec"
+                    ? "请输入 1–120 的整数（分钟）。"
+                    : "请输入 0–300 的整数（秒），0 为禁用。"}
               </p>
             ) : (
               <p className="dmscHint">{FIELD_HINTS[field]}</p>

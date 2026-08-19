@@ -13,11 +13,22 @@ export type ReclaimHook = (id: string) => void;
 
 export class SessionRegistry {
   readonly sessions = new Map<string, TerminalSession>();
-  readonly idleReclaimMs: number;
+  private _idleReclaimMs: number;
   private reclaimHook: ReclaimHook | null = null;
 
   constructor(idleReclaimMs: number) {
-    this.idleReclaimMs = idleReclaimMs;
+    this._idleReclaimMs = idleReclaimMs;
+  }
+
+  /** Current idle-reclaim window; the UI reads it to show a countdown. */
+  get idleReclaimMs() {
+    return this._idleReclaimMs;
+  }
+
+  /** Reconfigure the reclaim window. Already-armed timers keep their old
+   *  duration; the next detach arms with the new value (settings change). */
+  setIdleReclaimMs(ms: number) {
+    if (ms > 0) this._idleReclaimMs = ms;
   }
 
   /** Notified when a session leaves the registry (killed or reaped). */

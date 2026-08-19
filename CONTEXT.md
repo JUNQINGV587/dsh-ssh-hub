@@ -33,23 +33,23 @@ One live SSH connection plus its shell channel, attached to a Server. Lives on t
 _Avoid_: tab (a UI grouping of sessions), connection
 
 **Terminal Window**:
-The single floating window over the entire GUI that hosts the terminal surface (registered in `shell.overlay`, root scope). Draggable (viewport-clamped), resizable, double-click to maximize into the full frame. Inside: a Wave-style Tab bar, a Workspace switcher at its left, and the Block grid. Opening uses a scale+fade animation; when the window loses focus only the frame dims, terminal content stays readable. Closed windows never affect sessions.
+The single floating window over the entire GUI that hosts the terminal surface (registered in `shell.overlay`, root scope). Draggable (viewport-clamped), resizable, double-click to maximize into the full frame. Inside: a tab strip (items), the item body (one full-window session or a side-by-side group), a sessions panel (right sidebar), and the server drawer. Opening uses a scale+fade animation; when the window loses focus only the frame dims, terminal content stays readable. Closed windows never affect sessions. Magnify and maximize both exit on Esc; Esc never closes the window itself.
 _Avoid_: panel, dock, drawer, bottom panel
 
 **Tab**:
-The top-level layout container — one Layout Tree of Blocks with its own name. The active Tab is remembered. Closing a Tab returns its sessions to the Unplaced List; creating a Tab makes a single empty Block. (The Workspace layer was removed: Tabs ARE the top level.)
-_Avoid_: pane, block (a Block is inside a Tab), page
+An item that shows exactly one Terminal Session full-window, with its own name. The active Tab is remembered; closing a Tab removes the view only — the session keeps running on the host and returns to the unplaced list.
+_Avoid_: pane, block (a Block is a pane inside a Workspace), page
 
-**Block**:
-One pane of the layout holding exactly one Terminal Session (or an empty slot). Blocks live in same-direction lists inside a Tab's layout tree; dragging a block onto another offers 7 Wave drop targets (inline before/after, out-of-line inner/outer, swap) shown as green placeholders; margins resize blocks.
-_Avoid_: pane, tile, split, cell
-
-**Layout Tree**:
-The flexbox n-tree inside one Tab: a node is a Block or an ordered same-direction list; levels alternate row/column; node sizes are unitless and their sibling ratio decides displacement. New sessions auto-place into the first row (wrapping after five); removing a block compresses depth. A Block can be magnified to fill the window (a subtree view whose edits write back at its path).
+**Workspace**:
+An item that shows several Terminal Sessions side-by-side (a flat group with one orientation and one draggable divider between members). Members are created by merging Tabs, from the group picker, or by connecting a server "into the current item". A Workspace's ✕ dissolves it back into member Tabs (sessions stay in items).
 _Avoid_: grid, layout template, tiling, split tree
 
+**Block**:
+One pane of a Workspace holding exactly one Terminal Session. Blocks show a small badge (status dot + name) and hover float actions (magnify, remove). Dragging dividers resizes the members; a member can be magnified to fill the window.
+_Avoid_: pane, tile, split, cell
+
 **Unplaced List**:
-Sessions not currently in the Workspace (never placed, or removed from a Block). A session returns here when its Block is removed; it keeps running until the host reclaims it (ADR-0004).
+Sessions not currently in any Tab or Workspace (never placed, or removed from an item). A session returns here when its view is closed; it keeps running until the host reclaims it (ADR-0004). The sessions panel (right sidebar) is the global viewport: every session — placed or unplaced — with status, reclaim countdown, and place/kill actions.
 _Avoid_: tab strip, session list (too generic)
 
 **Sidebar Entry**:

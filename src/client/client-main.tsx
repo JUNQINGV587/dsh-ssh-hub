@@ -31,6 +31,8 @@ import {
   swapMembers,
   setOrientation,
   setSize,
+  merge,
+  ungroup,
   collectSessions as collectAllSessions,
 } from "../shared/group.mjs";
 /* Settings card + the shared bound settings scope (rc.7 settings.plugin.item).
@@ -203,6 +205,13 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsWinBody{flex:1;min-height:0;position:relative;background:var(--dmst-bg,#1e2128)}
 .dmsWinResize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:9}
 .dmsWinResize:after{content:'';position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid var(--dsw-alias-label-tertiary);border-bottom:2px solid var(--dsw-alias-label-tertiary);border-radius:1px;opacity:.6}
+/* Self-recovering error boundaries: the body card fills the window body; the
+   full card is a fixed overlay replacing the whole window. */
+.dmsCrash{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center;background:var(--dmst-bg,#1e2128);color:var(--dmst-fg,#f0f0f0);font-size:13px}
+.dmsCrashFull{position:fixed;inset:0;background:var(--dsw-alias-bg-base,#16181d)}
+.dmsCrashTitle{font-size:14px;font-weight:600}
+.dmsCrashHint{color:var(--dsw-alias-label-secondary,#9aa0a6);max-width:380px;line-height:1.5}
+.dmsCrashActions{display:flex;gap:8px;margin-top:4px}
 
 .dmsWinTabs{flex:none;display:flex;align-items:center;gap:4px;padding:4px 8px 0;border-bottom:1px solid var(--wave-border);background:var(--wave-bg);position:relative}
 .dmsTabList{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;scrollbar-width:none}
@@ -276,6 +285,58 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsBlockEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:transparent;width:100%;cursor:pointer;color:var(--wave-secondary);font-size:12px;font-weight:500}
 .dmsBlockEmpty:hover{background:var(--dsw-alias-interactive-bg-hover)}
 
+/* Items-view chrome that the flat-model refactor shipped without styles: the
+   window-body empty state and the workspace (side-by-side group) view. */
+.dmsItemsEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12.5px;text-align:center;padding:24px}
+.dmsItemsEmpty button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dmst-empty-btn-bg,#2a2e38);color:var(--dmst-empty-btn-fg,#e6e8ee);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dmsItemsEmpty button:hover{background:var(--dmst-empty-btn-bg-hover,#343946)}
+.dmsWsView{position:absolute;inset:0;display:flex;padding:4px}
+.dmsWsView.isV{flex-direction:column}
+.dmsWsMember{position:relative;display:flex;min-width:0;min-height:0;flex-direction:column}
+.dmsMember{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--dmst-bg,#1c1c1c);border:1px solid var(--wave-border);border-radius:8px;margin:1.5px;overflow:hidden;cursor:pointer}
+.dmsMember:hover{border-color:var(--dsw-alias-label-dimmed)}
+.dmsGroupDivider{flex:none;position:relative;z-index:5;background:transparent;transition:background .1s ease .5s}
+.dmsGroupDivider.isV{width:6px;cursor:col-resize}
+.dmsGroupDivider.isH{height:6px;cursor:row-resize}
+.dmsGroupDivider:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsWsOrient{position:absolute;right:10px;bottom:10px;z-index:7;height:24px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;cursor:pointer}
+.dmsWsOrient:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* Esc exit hint: persistent while magnified or maximized (U-4). */
+.dmsEscHint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;box-shadow:0 4px 14px rgba(0,0,0,.3);backdrop-filter:blur(4px)}
+.dmsWin.isLight .dmsEscHint{background:rgba(255,255,255,.85);color:#222;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+
+/* Window status strip: session summary + background-session count (U-5). */
+.dmsWinStatus{flex:none;display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;border-bottom:1px solid var(--wave-border);background:var(--wave-panel);color:var(--wave-secondary);font-size:11.5px;line-height:26px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmsWinStatus b{color:var(--wave-fg);font-weight:600}
+
+/* Toast (U-5): non-blocking close feedback with an optional action. */
+.dmsToast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:70;display:flex;align-items:center;gap:10px;max-width:70%;padding:8px 12px;border-radius:10px;background:var(--dsw-bg-card,#262a33);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.45);color:var(--dsw-alias-label-primary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;line-height:1.4}
+.dmsToastAction{flex:none;height:24px;padding:0 10px;border-radius:6px;border:1px solid rgba(231,72,86,.5);background:transparent;color:#ff8b93;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dmsToastAction:hover{background:rgba(231,72,86,.14)}
+
+/* Connect-failure surface (U-3): replaces the raw window.alert. */
+.dmsErrHead{font-size:13.5px;font-weight:600;color:var(--dmst-err-fg,#e6b0b0);margin-bottom:6px}
+.dmsErrActions{display:flex;gap:8px;margin-top:14px;justify-content:center}
+.dmsErrAction{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dms-tip,#2a2e38);color:var(--dms-tip-fg,#e6e8ee);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dmsErrAction:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsErrAction.primary{background:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));border-color:transparent;color:#fff}
+
+/* Reconnect bar for an exited session (U-3). */
+.dmsReconnect{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:40;display:flex;align-items:center;gap:10px;max-width:80%;padding:8px 12px;border-radius:10px;background:rgba(0,0,0,.6);border:1px solid var(--wave-border);color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;line-height:1.4}
+.dmsReconnect button{flex:none;height:24px;padding:0 10px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:rgba(255,255,255,.1);color:#fff;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dmsReconnect button:hover{background:rgba(255,255,255,.2)}
+
+/* Group picker (U-2): checkbox list popover from the tab bar. */
+.dmsGroupPicker{position:absolute;top:36px;right:96px;z-index:50;width:260px;max-height:320px;display:flex;flex-direction:column;background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);overflow:hidden}
+.dmsGroupPickerHead{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dmsGroupPickerBody{flex:1;min-height:0;overflow-y:auto;padding:6px}
+.dmsGroupRow{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border-radius:7px;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;cursor:pointer}
+.dmsGroupRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsGroupRow input{margin:0;accent-color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
+.dmsGroupFoot{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dmsGroupFoot .dmsSpacer{flex:1}
+
 /* Session list panel */
 .dmsListPanel{position:absolute;right:8px;bottom:8px;top:8px;width:260px;z-index:8;display:flex;flex-direction:column;background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.5);overflow:hidden}
 .dmsListHead{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary)}
@@ -290,7 +351,9 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsListRow:hover .dmsListKill{opacity:.8}
 .dmsListKill:hover{opacity:1;background:rgba(231,72,86,.2);color:#ff8b93}
 .dmsListDot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--dsw-alias-label-tertiary)}
+.dmsListDot.isConnecting{background:#e8b339;animation:dmsPulse 1s ease-in-out infinite}
 .dmsListDot.isLive{background:#2ee62e}
+.dmsListDot.isClosed{background:#e74856}
 .dmsListLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmsListHint{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px}
 
@@ -389,6 +452,42 @@ async function api(path: string, opts?: RequestInit) {
   return body;
 }
 
+/** U-3: map raw ssh2/HTTP failure text to a human-classified error surface. */
+function classifySshError(msg: string): { title: string; detail: string } {
+  const m = String(msg);
+  if (/timed?\s?out|ETIMEDOUT|timeout/i.test(m)) {
+    return {
+      title: "连接超时",
+      detail: "服务器在限定时间内未响应。可在「编辑服务器」中调大连接超时（当前默认 15 秒），或检查网络与防火墙。",
+    };
+  }
+  if (/All configured authentication methods failed|Permission denied|authentication failed|authentication/i.test(m)) {
+    return {
+      title: "认证失败",
+      detail: "用户名或密码 / 私钥不正确。请在「编辑服务器」中检查凭据后重试。",
+    };
+  }
+  if (/Host key verification failed|host key/i.test(m)) {
+    return {
+      title: "主机密钥校验失败",
+      detail: "服务器不在 known-hosts 中。可暂时在「编辑服务器」或设置中关闭「严格主机密钥校验」，或手动添加该服务器的主机指纹后重试。",
+    };
+  }
+  if (/ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ECONNRESET|EAI_AGAIN|connect/i.test(m)) {
+    return {
+      title: "无法连接",
+      detail: "网络不可达或端口未开放。请检查主机地址、端口与网络后重试。",
+    };
+  }
+  if (/cannot read private key|private key|passphrase|ENOENT/i.test(m)) {
+    return {
+      title: "私钥读取失败",
+      detail: "私钥路径无效或口令不正确。请在「编辑服务器」中检查私钥配置。",
+    };
+  }
+  return { title: "连接失败", detail: m };
+}
+
 type AuthKind = "password" | "privateKey" | "agent" | "none";
 
 interface ServerView {
@@ -422,6 +521,8 @@ interface TermTab {
   label: string;
   status: TabStatus;
   error?: string;
+  /** Epoch ms of the last detach (host /sessions); null while attached. */
+  lastDetachedAt?: number | null;
 }
 
 /* ---------------- small icons ---------------- */
@@ -442,6 +543,14 @@ const Icon = {
   chevronDown: () => (
     <svg width={14} height={14} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z" fill="currentColor" />
+    </svg>
+  ),
+  grid: () => (
+    <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x={1.6} y={1.6} width={4.4} height={4.4} rx={1.1} stroke="currentColor" strokeWidth={1.05} />
+      <rect x={8} y={1.6} width={4.4} height={4.4} rx={1.1} stroke="currentColor" strokeWidth={1.05} />
+      <rect x={1.6} y={8} width={4.4} height={4.4} rx={1.1} stroke="currentColor" strokeWidth={1.05} />
+      <rect x={8} y={8} width={4.4} height={4.4} rx={1.1} stroke="currentColor" strokeWidth={1.05} />
     </svg>
   ),
   plus: () => (
@@ -514,13 +623,16 @@ function XtermPane({
   active,
   surface,
   onStatus,
+  onReconnect,
 }: {
   tab: TermTab;
   active: boolean;
   /** Surface key ("dock" | "focus"): the same session may render on both
-   *  surfaces at once, so each xterm instance registers under its own key. */
+    *  surfaces at once, so each xterm instance registers under its own key. */
   surface: string;
   onStatus: (patch: Partial<TermTab>) => void;
+  /** Opens a NEW session on the same server for an exited session (U-3). */
+  onReconnect?: (tab: TermTab) => void;
 }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
   const termRef = React.useRef<Terminal | null>(null);
@@ -565,37 +677,68 @@ function XtermPane({
     fitRef.current = fit;
 
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(proto + "//" + location.host + PREFIX + "/ws/" + tab.id);
-    wsRef.current = ws;
-    ws.onopen = () => {
-      onStatusRef.current({
-        status: initialStatus.current === "closed" ? "closed" : "live",
-      });
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    // U-3: transparent WS auto-reconnect. A network blip must not freeze the
+    // view for good — the host session survives (ADR-0004) and the scrollback
+    // replay re-syncs the terminal on re-attach. Give up after a few backoff
+    // rounds so a truly dead session falls back to the closed state.
+    let disposed = false;
+    let reconnectTimer: number | null = null;
+    let attempts = 0;
+    let ws: WebSocket | null = null;
+    const scheduleReconnect = () => {
+      if (disposed || closedByUs.current) return;
+      if (attempts >= 6) {
+        onStatusRef.current({ status: "closed" });
+        return;
       }
+      onStatusRef.current({ status: "connecting" });
+      const delay = Math.min(15000, 500 * 2 ** attempts);
+      attempts += 1;
+      reconnectTimer = window.setTimeout(open, delay);
     };
-    ws.onmessage = (ev) => {
-      if (typeof ev.data === "string") term.write(ev.data);
-      else if (ev.data instanceof Blob) {
-        ev.data.arrayBuffer().then((buf) => term.write(new Uint8Array(buf)));
-      } else {
-        term.write(new Uint8Array(ev.data));
-      }
+    const open = () => {
+      if (disposed || closedByUs.current) return;
+      const next = new WebSocket(proto + "//" + location.host + PREFIX + "/ws/" + tab.id);
+      ws = next;
+      wsRef.current = next;
+      next.onopen = () => {
+        onStatusRef.current({
+          status: initialStatus.current === "closed" ? "closed" : "live",
+        });
+        if (next.readyState === WebSocket.OPEN) {
+          next.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        }
+      };
+      next.onmessage = (ev) => {
+        if (typeof ev.data === "string") term.write(ev.data);
+        else if (ev.data instanceof Blob) {
+          ev.data.arrayBuffer().then((buf) => term.write(new Uint8Array(buf)));
+        } else {
+          term.write(new Uint8Array(ev.data));
+        }
+      };
+      next.onclose = () => {
+        if (disposed || closedByUs.current) return;
+        // The host closes the socket with "session closed" when the shell
+        // exited — the retries then fail and we land on "closed" anyway.
+        scheduleReconnect();
+      };
+      next.onerror = () => {
+        onStatusRef.current({ status: "error" });
+        try {
+          next.close();
+        } catch {
+          /* ignore */
+        }
+      };
     };
-    ws.onclose = () => {
-      if (!closedByUs.current) onStatusRef.current({ status: "closed" });
-    };
-    ws.onerror = () => {
-      onStatusRef.current({ status: "error" });
-      ws.close();
-    };
+    open();
 
     const onData = (d: string) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(d);
+      if (ws !== null && ws.readyState === WebSocket.OPEN) ws.send(d);
     };
     const onResize = ({ cols, rows }: { cols: number; rows: number }) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws !== null && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "resize", cols, rows }));
       }
     };
@@ -629,16 +772,20 @@ function XtermPane({
     el.addEventListener("contextmenu", onCtx);
 
     return () => {
+      disposed = true;
       closedByUs.current = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       termRegistry.delete(registryKey);
       el.removeEventListener("mouseup", onMouseUp);
       el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("contextmenu", onCtx);
-      ws.onclose = null;
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
+      if (ws !== null) {
+        ws.onclose = null;
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       }
       term.dispose();
       termRef.current = null;
@@ -660,7 +807,18 @@ function XtermPane({
     return () => cancelAnimationFrame(raf);
   }, [active]);
 
-  return <div className={"dmsPane" + (active ? " isActive" : "")} ref={hostRef} />;
+  return (
+    <div className={"dmsPane" + (active ? " isActive" : "")} ref={hostRef}>
+      {tab.status === "closed" && tab.serverId !== "" && onReconnect !== undefined && (
+        <div className="dmsReconnect">
+          <span>会话已结束{tab.label ? "：" + tab.label : ""}</span>
+          <button type="button" onClick={() => onReconnect(tab)}>
+            重连同一服务器
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ---------------- server form ---------------- */
@@ -1222,7 +1380,7 @@ function useWorkspaceState(enabled: boolean) {
     let cancelled = false;
     api("/workspace")
       .then((b) => {
-        if (!cancelled) setCollection(b.workspace ?? defaultCollection());
+        if (!cancelled) setCollection(normalizeCollection(b.workspace));
       })
       .catch(() => {
         /* older host: no workspace route — keep the local default */
@@ -1233,7 +1391,10 @@ function useWorkspaceState(enabled: boolean) {
       ws.onmessage = (ev) => {
         if (typeof ev.data !== "string" || cancelled) return;
         try {
-          setCollection(JSON.parse(ev.data));
+          // Normalize at the wire seam: a malformed/legacy push must never
+          // reach the renderers (an un-normalized item used to be one
+          // malformed host payload away from crashing the whole window).
+          setCollection(normalizeCollection(JSON.parse(ev.data)));
         } catch {
           /* ignore malformed push */
         }
@@ -1251,7 +1412,7 @@ function useWorkspaceState(enabled: boolean) {
     api("/workspace", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
       console.error("[dsh-ssh-hub] workspace PUT failed, reverting:", e);
       api("/workspace")
-        .then((b) => setCollection(b.workspace ?? defaultCollection()))
+        .then((b) => setCollection(normalizeCollection(b.workspace)))
         .catch(() => {
           /* host unreachable; keep local state until the next push */
         });
@@ -1319,6 +1480,7 @@ function MemberTile({
   isMagnified,
   onClose,
   onRemove,
+  onReconnect,
 }: {
   member: { sessionId: string; name: string };
   tabs: TermTab[];
@@ -1327,6 +1489,7 @@ function MemberTile({
   isMagnified: boolean;
   onClose: () => void;
   onRemove: () => void;
+  onReconnect?: (tab: TermTab) => void;
 }) {
   const tab = tabs.find((t) => t.id === member.sessionId);
   const dotClass =
@@ -1362,6 +1525,7 @@ function MemberTile({
         active={true}
         surface="window"
         onStatus={(patch) => onStatus(member.sessionId, patch)}
+        onReconnect={onReconnect}
       />
     </div>
   );
@@ -1379,6 +1543,8 @@ function ItemsView({
   onCloseItem,
   onPlace,
   openSidebar,
+  onReconnect,
+  onRemoveMember,
 }: {
   collection: any;
   tabs: TermTab[];
@@ -1389,6 +1555,8 @@ function ItemsView({
   onCloseItem: (idx: number) => void;
   onPlace: (sessionId: string) => void;
   openSidebar: () => void;
+  onReconnect?: (tab: TermTab) => void;
+  onRemoveMember?: (sessionId: string) => void;
 }) {
   const it = collection.items[collection.activeIndex] ?? null;
   if (it === null) {
@@ -1419,6 +1587,7 @@ function ItemsView({
         active={true}
         surface="window"
         onStatus={(patch) => onStatus(it.sessionId!, patch)}
+        onReconnect={onReconnect}
       />
     );
   }
@@ -1442,7 +1611,14 @@ function ItemsView({
                 onMagnify={() => onMagnifyMember(magnifiedMember === idx ? null : idx)}
                 isMagnified={magnifiedMember === idx}
                 onClose={() => onCloseItem(collection.activeIndex)}
-                onRemove={() => onCommit(removeMember(collection, collection.activeIndex, idx).collection)}
+                onRemove={() => {
+                  // The member's session returns to the unplaced list and keeps
+                  // running — surface that (U-5) before it slips out of sight.
+                  const r = removeMember(collection, collection.activeIndex, idx);
+                  onCommit(r.collection);
+                  if (r.member !== null) onRemoveMember?.(r.member.sessionId);
+                }}
+                onReconnect={onReconnect}
               />
             </div>
             {i < shown.length - 1 && (
@@ -1550,7 +1726,98 @@ function saveWin(v: { x: number; y: number; w: number; h: number }) {
   }
 }
 
+/* ---------------- error boundaries (window self-recovery) ---------------- */
+
+/**
+ * Body-level boundary: if the session grid / xterm panes / sidebars crash
+ * while rendering, only the window body is replaced by a readable failure
+ * state with Retry — the window frame (tabs, close, drag, maximize) stays
+ * alive. Without it, any render/effect error would bubble to DSH's
+ * shell.overlay boundary, which abdicates the entry one-shot: the window
+ * would be gone until the page reloads (the module flag keeps flipping but
+ * nothing ever renders again). React 18 routes both render errors and
+ * useEffect errors through error boundaries, so both crash classes land here.
+ */
+class WindowBodyErrorBoundary extends React.Component {
+  state = { failed: false, epoch: 0 };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.error("[dsh-ssh-hub] terminal window body crashed:", error);
+  }
+  retry = () => this.setState((s) => ({ failed: false, epoch: s.epoch + 1 }));
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="dmsCrash" role="alert">
+          <div className="dmsCrashTitle">终端窗口遇到问题</div>
+          <div className="dmsCrashHint">窗口内容渲染失败。会话仍在后台运行，不受影响。</div>
+          <button className="dmsBtn primary" onClick={this.retry}>
+            重试
+          </button>
+        </div>
+      );
+    }
+    // key bump forces a clean remount on retry (effects re-run from scratch)
+    return <React.Fragment key={this.state.epoch}>{this.props.children}</React.Fragment>;
+  }
+}
+
+/**
+ * Whole-window boundary (the exported surface): catches crashes in the
+ * window's own hooks/render before they reach DSH's abdicating slot
+ * boundary. Unlike the body boundary, the frame is gone here, so the failure
+ * card is a full-screen overlay with Retry and Close. A crash never outlives
+ * the window: reopening it clears the failure automatically.
+ */
+class TerminalWindowBoundary extends React.Component {
+  state = { failed: false, epoch: 0 };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.error("[dsh-ssh-hub] terminal window crashed:", error);
+  }
+  componentDidMount() {
+    this.unsub = subscribeTerminal(() => {
+      if (getTerminalVisible() && this.state.failed) this.setState((s) => ({ failed: false, epoch: s.epoch + 1 }));
+    });
+  }
+  componentWillUnmount() {
+    this.unsub?.();
+  }
+  retry = () => this.setState((s) => ({ failed: false, epoch: s.epoch + 1 }));
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="dmsCrash dmsCrashFull" role="alert">
+          <div className="dmsCrashTitle">SSH 终端窗口遇到问题</div>
+          <div className="dmsCrashHint">窗口渲染失败。会话仍在后台运行，不受影响；可以重试或关闭窗口。</div>
+          <div className="dmsCrashActions">
+            <button className="dmsBtn primary" onClick={this.retry}>
+              重试
+            </button>
+            <button className="dmsBtn" onClick={() => setTerminalVisible(false)}>
+              关闭窗口
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <React.Fragment key={this.state.epoch}>{this.props.children}</React.Fragment>;
+  }
+}
+
 export function TerminalWindow() {
+  return (
+    <TerminalWindowBoundary>
+      <TerminalWindowFrame />
+    </TerminalWindowBoundary>
+  );
+}
+
+function TerminalWindowFrame() {
   const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible, getTerminalVisible);
   const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized, getTerminalMaximized);
   const { collection, commit } = useWorkspaceState(visible);
@@ -1580,7 +1847,21 @@ export function TerminalWindow() {
   const bodyRef = React.useRef<HTMLDivElement>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
   const movedRef = React.useRef(false);
-  const lastClickRef = React.useRef<{ t: number; x: number; y: number } | null>(null);
+  /** U-5: non-blocking toast (close feedback with an optional action). */
+  const [toast, setToast] = React.useState<{ text: string; actionLabel?: string; onAction?: () => void } | null>(null);
+  const toastTimer = React.useRef<number | null>(null);
+  const showToast = React.useCallback((t: { text: string; actionLabel?: string; onAction?: () => void }) => {
+    setToast(t);
+    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3500);
+  }, []);
+  /** U-3: in-window connect-failure surface (replaces window.alert). */
+  const [connectErr, setConnectErr] = React.useState<{ title: string; detail: string } | null>(null);
+  const retryTarget = React.useRef<ServerView | null>(null);
+  /** Host reclaim window (ms) for the sidebar countdown (Q13). */
+  const [reclaimAfterMs, setReclaimAfterMs] = React.useState<number>(30 * 60 * 1000);
+  /** U-2: group picker selection (session ids to merge into one workspace). */
+  const [groupPick, setGroupPick] = React.useState<Set<string> | null>(null);
 
   /* ---- world state: sessions + servers (projections of host truth) ---- */
   React.useEffect(() => {
@@ -1589,7 +1870,7 @@ export function TerminalWindow() {
     refreshDefaults();
     api("/sessions")
       .then((b) => {
-        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
+        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean; lastDetachedAt?: number | null }> =
           b.sessions ?? [];
         setTabs(
           remote.map((s) => ({
@@ -1597,8 +1878,10 @@ export function TerminalWindow() {
             serverId: s.serverId,
             label: s.serverName || s.label,
             status: s.exited ? "closed" : "connecting",
+            lastDetachedAt: s.lastDetachedAt ?? null,
           })),
         );
+        if (typeof b.reclaimAfterMs === "number" && b.reclaimAfterMs > 0) setReclaimAfterMs(b.reclaimAfterMs);
         if (remote.length > 0 && collection.items.length === 0) {
           // no items yet: open the first session as its own tab
           commit({ ...collection, items: [{ kind: "tab", sessionId: remote[0].id, name: remote[0].label }], activeIndex: 0 });
@@ -1637,14 +1920,22 @@ export function TerminalWindow() {
 
   /* ---- opening/closing animation (skipped under reduced motion) ---- */
   React.useEffect(() => {
+    // Any visibility flip cancels the other animation mid-flight: the effect
+    // cleanup below clears the pending timer, which used to leave the flag it
+    // was going to reset stuck at `true` forever (a close followed by a fast
+    // reopen left `closing=true`, so the window re-rendered as a permanent
+    // 30%-opacity ghost — .dmsWin.isClosing has `forwards` fill — and every
+    // later open/close became a silent no-op until the page reloaded).
+    // Resetting both flags on every run makes a stuck flag impossible.
+    setOpening(false);
+    setClosing(false);
+    if (prefersReducedMotion()) return;
     if (visible) {
-      if (prefersReducedMotion()) return;
       setOpening(true);
       const t = setTimeout(() => setOpening(false), 170);
       return () => clearTimeout(t);
     }
     // closing: keep the component mounted briefly so the reverse plays
-    if (prefersReducedMotion()) return;
     setClosing(true);
     const t = setTimeout(() => setClosing(false), 160);
     return () => clearTimeout(t);
@@ -1666,14 +1957,26 @@ export function TerminalWindow() {
 
 
   /* ---- keyboard: Esc (maximized then close), plus basic Wave bindings.
-   * Hardcoded here; the full configurable preset lands in T4. ---- */
+   * Hardcoded here; the full configurable preset lands in T4.
+   * The listener runs in the CAPTURE phase: xterm's own keydown handler
+   * calls preventDefault+stopPropagation for keys it consumes, so a bubble
+   * listener never fired while the terminal textarea had focus (which it
+   * does right after a session opens) — Alt+t / Alt+w / F2 / Esc all looked
+   * dead. Capture intercepts the configured shortcuts before xterm sees
+   * them. Esc is the exception: it stays with the focused terminal / input
+   * (vim, the rename box, drawer forms) and only the window chrome handles
+   * it as "exit maximized / close". ---- */
   React.useEffect(() => {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        const t = document.activeElement;
+        if (t !== null && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || (t as HTMLElement).isContentEditable)) return;
+        // U-4: Esc walks down one level only (magnify → maximize) and never
+        // closes the window — closing stays on the explicit ✕. The three-level
+        // chain (… → hide window) was an accidental-close trap.
         if (magnifiedMember !== null) setMagnifiedMember(null);
         else if (getTerminalMaximized()) setTerminalMaximized(false);
-        else setTerminalVisible(false);
         return;
       }
       // Configurable bindings (Wave preset by default); read fresh each
@@ -1710,22 +2013,49 @@ export function TerminalWindow() {
         return;
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, collection, activeItem, magnifiedMember]);
 
   /* ---- tab operations ---- */
   const newTab = () => {
+    // addTab returns the new collection directly (items model); activate the
+    // appended empty tab. (A stale `setActiveTab(next, next.tabs.length-1)`
+    // from the pre-items tree model made 新标签页 / Alt+t throw silently.)
     const next = addTab(collection);
-    commit(setActiveTab(next, next.tabs.length - 1));
+    commit(setActiveIndex(next, next.items.length - 1));
   };
   const closeTabAt = (tabIdx: number) => {
-    const [next] = removeTab(collection, tabIdx);
+    const it = collection.items[tabIdx];
+    if (it === undefined) return;
+    if (it.kind === "workspace") {
+      // U-2: a workspace's ✕ dissolves it back into member tabs (sessions
+      // stay in items) instead of dumping every session to the unplaced list.
+      commit(ungroup(collection, tabIdx));
+      return;
+    }
+    // removeTab returns the new collection directly (items model). A stale
+    // `const [next] = removeTab(...)` destructure used to throw "object is not
+    // iterable" in the click handler — 关闭标签页 (✕ / Alt+w / Alt+Shift+w)
+    // silently did nothing.
+    const next = removeTab(collection, tabIdx);
     commit(next);
+    // U-5: closing a tab only unmounts the view — the session keeps running
+    // on the host. Say so, and offer the kill as a one-click follow-up.
+    if (it.sessionId !== null) {
+      showToast({
+        text: "会话仍在运行，已放入未放置列表",
+        actionLabel: "立即结束",
+        onAction: () => killSession(it.sessionId as string),
+      });
+    }
   };
   const doRenameTab = (tabIdx: number, name: string) => {
-    commit(renameTab(collection, tabIdx, name));
+    // renameItem is the items-model API; `renameTab` was the pre-items name
+    // and no longer exists — 重命名 (F2 / double-click a tab) used to throw a
+    // ReferenceError and silently do nothing.
+    commit(renameItem(collection, tabIdx, name));
     setRenaming(null);
   };
 
@@ -1810,19 +2140,136 @@ export function TerminalWindow() {
     commitItems(next);
     setSidebarOpen(false);
   };
+  /** Place a session as its own new tab (sidebar "新标签" action). */
+  const placeNewTab = (sessionId: string) => {
+    const tab = tabs.find((t) => t.id === sessionId);
+    const name = tab?.label ?? sessionId;
+    const next = addTab(collection);
+    const items = next.items.map((x, i) => (i === next.items.length - 1 ? { ...x, sessionId, name } : x));
+    commitItems({ ...next, items, activeIndex: next.items.length - 1 });
+    setSidebarOpen(false);
+  };
   const connectTo = async (s: ServerView) => {
     setBusy(true);
     setPicker(false);
+    setConnectErr(null);
+    retryTarget.current = s;
     try {
       const body = await api("/sessions", { method: "POST", body: JSON.stringify({ serverId: s.id, cols: 80, rows: 24 }) });
       const tab: TermTab = { id: body.id, serverId: s.id, label: s.name || `${s.username}@${s.host}`, status: "connecting" };
       setTabs((prev) => [...prev, tab]);
-      // open it in the focused block (or the first empty leaf / a new right split)
+      // U-2: a fresh session opens as its own tab (full-window).
       const next = addTab(collection);
       const items = next.items.map((x, i) => (i === next.items.length - 1 ? { ...x, sessionId: body.id, name: tab.label } : x));
       commitItems({ ...next, items, activeIndex: next.items.length - 1 });
     } catch (e) {
-      window.alert("连接失败：" + String(e instanceof Error ? e.message : e));
+      // U-3: classify and surface in-window with retry / edit actions.
+      setConnectErr(classifySshError(String(e instanceof Error ? e.message : e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+  /** U-2: open a session and put it INTO the active item (workspace member,
+   *  or merge with the active tab) instead of a fresh tab. */
+  const connectToGroup = async (s: ServerView) => {
+    setBusy(true);
+    setPicker(false);
+    setConnectErr(null);
+    retryTarget.current = s;
+    try {
+      const body = await api("/sessions", { method: "POST", body: JSON.stringify({ serverId: s.id, cols: 80, rows: 24 }) });
+      const tab: TermTab = { id: body.id, serverId: s.id, label: s.name || `${s.username}@${s.host}`, status: "connecting" };
+      setTabs((prev) => [...prev, tab]);
+      const it = activeItem;
+      let next = collection;
+      if (it !== null && it.kind === "workspace") {
+        next = addMember(collection, collection.activeIndex, { sessionId: body.id, name: tab.label });
+      } else if (it !== null && it.kind === "tab" && it.sessionId === null) {
+        // an empty active tab takes the session directly
+        const items = collection.items.map((x, i) => (i === collection.activeIndex ? { ...x, sessionId: body.id, name: tab.label } : x));
+        next = { ...collection, items };
+      } else {
+        // open the session as a tab, then merge it into the active tab (or
+        // keep it a plain tab when there is no active item).
+        const appended = addTab(collection);
+        const withSession = {
+          ...appended,
+          items: appended.items.map((x, i) =>
+            i === appended.items.length - 1 ? { ...x, sessionId: body.id, name: tab.label } : x,
+          ),
+        };
+        if (it !== null && it.kind === "tab") {
+          next = merge(withSession, withSession.items.length - 1, collection.activeIndex);
+          next = { ...next, activeIndex: collection.activeIndex };
+        } else {
+          next = withSession;
+        }
+      }
+      commitItems(next);
+    } catch (e) {
+      setConnectErr(classifySshError(String(e instanceof Error ? e.message : e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+  /** U-2: build one workspace from the checked sessions (group picker). */
+  const createGroupFrom = (selected: string[]) => {
+    if (selected.length < 2) {
+      setGroupPick(null);
+      return;
+    }
+    const kept: any[] = [];
+    for (const it of collection.items) {
+      if (it.kind === "tab") {
+        if (it.sessionId === null || !selected.includes(it.sessionId)) kept.push(it);
+      } else {
+        const remaining = it.members.filter((m: any) => !selected.includes(m.sessionId));
+        if (remaining.length === 0) continue;
+        if (remaining.length === 1) {
+          kept.push({ kind: "tab", sessionId: remaining[0].sessionId, name: remaining[0].name });
+        } else {
+          kept.push({ ...it, members: remaining, sizes: it.sizes.slice(0, remaining.length) });
+        }
+      }
+    }
+    let ws: any = null;
+    for (const id of selected) {
+      const tab = tabs.find((t) => t.id === id);
+      const name = tab?.label ?? id;
+      if (ws === null) {
+        ws = { kind: "workspace", name: "组合", orientation: "h", members: [{ sessionId: id, name }], sizes: [1] };
+      } else {
+        ws = { ...ws, members: [...ws.members, { sessionId: id, name }], sizes: [...ws.sizes, 1] };
+      }
+    }
+    if (ws !== null) kept.push(ws);
+    commitItems({ items: kept, activeIndex: Math.max(0, kept.length - 1) });
+    setGroupPick(null);
+  };
+  /** U-3: a session that exited gets a NEW session on the same server,
+   *  swapped into the same item slot. */
+  const reconnectSession = async (old: TermTab) => {
+    if (!old.serverId) return;
+    setBusy(true);
+    try {
+      const body = await api("/sessions", { method: "POST", body: JSON.stringify({ serverId: old.serverId, cols: 80, rows: 24 }) });
+      const fresh: TermTab = { id: body.id, serverId: old.serverId, label: body.serverName || old.label, status: "connecting" };
+      setTabs((prev) => [...prev, fresh]);
+      // swap the session id everywhere it appears in the collection
+      const items = collection.items.map((it: any) => {
+        if (it.kind === "tab") {
+          return it.sessionId === old.id ? { ...it, sessionId: fresh.id, name: fresh.label } : it;
+        }
+        if (it.kind === "workspace") {
+          const members = it.members.map((m: any) => (m.sessionId === old.id ? { ...m, sessionId: fresh.id, name: fresh.label } : m));
+          const sizes = it.sizes.map((s: number, i: number) => (it.members[i]?.sessionId === old.id ? 1 : s));
+          return { ...it, members, sizes };
+        }
+        return it;
+      });
+      commitItems({ ...collection, items, activeIndex: collection.activeIndex });
+    } catch (e) {
+      setConnectErr(classifySshError(String(e instanceof Error ? e.message : e)));
     } finally {
       setBusy(false);
     }
@@ -1836,8 +2283,9 @@ export function TerminalWindow() {
     // reconcile from the host
     try {
       const body = await api("/sessions");
-      const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> = body.sessions ?? [];
-      setTabs(remote.map((s) => ({ id: s.id, serverId: s.serverId, label: s.serverName || s.label, status: s.exited ? "closed" : "connecting" })));
+      const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean; lastDetachedAt?: number | null }> = body.sessions ?? [];
+      setTabs(remote.map((s) => ({ id: s.id, serverId: s.serverId, label: s.serverName || s.label, status: s.exited ? "closed" : "connecting", lastDetachedAt: s.lastDetachedAt ?? null })));
+      if (typeof body.reclaimAfterMs === "number" && body.reclaimAfterMs > 0) setReclaimAfterMs(body.reclaimAfterMs);
     } catch {
       /* host unreachable */
     }
@@ -1860,6 +2308,7 @@ export function TerminalWindow() {
   if (!visible && !closing) return null;
 
   const placedCount = collectAllSessions(collection).length;
+  const unplacedCount = Math.max(0, tabs.length - placedCount);
   const stateLabel =
     tabs.length === 0
       ? servers.length === 0
@@ -1876,7 +2325,17 @@ export function TerminalWindow() {
       role="dialog"
       aria-label="SSH 终端"
     >
-      <div className="dmsWinTabs" onPointerDown={startMove}>
+      <div
+        className="dmsWinTabs"
+        onPointerDown={startMove}
+        onDoubleClick={(e) => {
+          // Title-bar double-click toggles maximize (README: 双击标题栏最大化).
+          // Tab names already double-click to rename and buttons have their own
+          // actions — those targets must not also flip the window state.
+          if ((e.target as HTMLElement).closest("button, .dmsTab, .dmsTabAdd")) return;
+          toggleMax();
+        }}
+      >
         <div className="dmsTabList" role="tablist">
           {collection.items.map((it, i) => (
             <span
@@ -1923,8 +2382,11 @@ export function TerminalWindow() {
         <button className="dmsTabAdd" title="新标签页（Alt+t）" aria-label="新标签页" onClick={newTab}>
           {Icon.plus()}
         </button>
+        <button className="dmsTabAdd" title="新建组合（勾选会话并排监控）" aria-label="新建组合" onClick={() => setGroupPick(new Set())}>
+          {Icon.grid()}
+        </button>
         <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
-          <button className={"dmsWinAction" + (sidebarOpen ? " isOn" : "")} title="Widgets（服务器 / 未放置会话）" aria-label="Widgets" onClick={() => setSidebarOpen((v) => !v)}>
+          <button className={"dmsWinAction" + (sidebarOpen ? " isOn" : "")} title="会话（服务器 / 全部会话）" aria-label="会话" onClick={() => setSidebarOpen((v) => !v)}>
             {Icon.list()}
           </button>
           <button className="dmsWinAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
@@ -1936,38 +2398,149 @@ export function TerminalWindow() {
           <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
             {maximized ? Icon.minimize() : Icon.maximize()}
           </button>
-          <button className="dmsWinAction" title="收起（Esc）" aria-label="收起" onClick={() => setTerminalVisible(false)}>
+          <button className="dmsWinAction" title="收起窗口" aria-label="收起窗口" onClick={() => setTerminalVisible(false)}>
             {Icon.close()}
           </button>
         </span>
       </div>
-      <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
-        <ItemsView
-          collection={collection}
-          tabs={tabs}
-          magnifiedMember={magnifiedMember}
-          onMagnifyMember={setMagnifiedMember}
-          onStatus={(tabId, patch) => setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))}
-          onCommit={commitItems}
-          onCloseItem={closeTabAt}
-          onPlace={placeInto}
-          openSidebar={() => setSidebarOpen(true)}
-        />
-        {picker && (
-          <ServerPicker servers={servers} busy={busy} onPick={connectTo} onManage={() => setDrawer(true)} onClose={() => setPicker(false)} />
-        )}
-        {sidebarOpen && (
-          <RightSidebar
-            servers={servers}
-            tabs={tabs}
-            collection={collection}
-            onStart={(s) => connectTo(s)}
-            onPlace={(id) => placeInto(id)}
-            onKill={(id) => killSession(id)}
-            onClose={() => setSidebarOpen(false)}
-          />
+      <div className="dmsWinStatus">
+        {stateLabel}
+        {unplacedCount > 0 && (
+          <>
+            {" · "}
+            <b>{unplacedCount}</b> 个会话在后台运行
+          </>
         )}
       </div>
+      <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
+        <WindowBodyErrorBoundary>
+          <ItemsView
+            collection={collection}
+            tabs={tabs}
+            magnifiedMember={magnifiedMember}
+            onMagnifyMember={setMagnifiedMember}
+            onStatus={(tabId, patch) => setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))}
+            onCommit={commitItems}
+            onCloseItem={closeTabAt}
+            onPlace={placeInto}
+            openSidebar={() => setSidebarOpen(true)}
+            onReconnect={reconnectSession}
+            onRemoveMember={(sid) =>
+              showToast({
+                text: "会话仍在运行，已放入未放置列表",
+                actionLabel: "立即结束",
+                onAction: () => killSession(sid),
+              })
+            }
+          />
+          {picker && (
+            <ServerPicker
+              servers={servers}
+              busy={busy}
+              onPick={connectTo}
+              onJoin={connectToGroup}
+              onManage={() => setDrawer(true)}
+              onClose={() => setPicker(false)}
+            />
+          )}
+          {connectErr !== null && (
+            <div className="dmsErr">
+              <div className="dmsErrHead">{connectErr.title}</div>
+              <div>{connectErr.detail}</div>
+              <div className="dmsErrActions">
+                <button
+                  className="dmsErrAction primary"
+                  onClick={() => {
+                    const target = retryTarget.current;
+                    setConnectErr(null);
+                    if (target !== null) connectTo(target);
+                  }}
+                >
+                  重试
+                </button>
+                <button
+                  className="dmsErrAction"
+                  onClick={() => {
+                    setConnectErr(null);
+                    setDrawer(true);
+                  }}
+                >
+                  编辑服务器
+                </button>
+                <button className="dmsErrAction" onClick={() => setConnectErr(null)}>
+                  关闭
+                </button>
+              </div>
+            </div>
+          )}
+          {sidebarOpen && (
+            <RightSidebar
+              servers={servers}
+              tabs={tabs}
+              collection={collection}
+              reclaimAfterMs={reclaimAfterMs}
+              onStart={(s) => connectTo(s)}
+              onPlace={(id) => placeInto(id)}
+              onPlaceNew={(id) => placeNewTab(id)}
+              onKill={(id) => killSession(id)}
+              onClose={() => setSidebarOpen(false)}
+            />
+          )}
+        </WindowBodyErrorBoundary>
+      </div>
+      {(magnifiedMember !== null || maximized) && <div className="dmsEscHint">按 Esc 还原</div>}
+      {groupPick !== null && (
+        <div className="dmsGroupPicker">
+          <div className="dmsGroupPickerHead">选择会话创建组合（并排）</div>
+          <div className="dmsGroupPickerBody">
+            {tabs.map((t) => {
+              const checked = groupPick.has(t.id);
+              return (
+                <label key={t.id} className="dmsGroupRow">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = new Set(groupPick);
+                      if (checked) next.delete(t.id);
+                      else next.add(t.id);
+                      setGroupPick(next);
+                    }}
+                  />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</span>
+                </label>
+              );
+            })}
+            {tabs.length === 0 && <div className="dmsSidebarEmpty">还没有会话，先连接一台服务器</div>}
+          </div>
+          <div className="dmsGroupFoot">
+            <span className="dmsHint">至少选择 2 个会话</span>
+            <span className="dmsSpacer" />
+            <button className="dmsBtn" onClick={() => setGroupPick(null)}>
+              取消
+            </button>
+            <button className="dmsBtn primary" disabled={groupPick.size < 2} onClick={() => createGroupFrom([...groupPick])}>
+              创建组合
+            </button>
+          </div>
+        </div>
+      )}
+      {toast !== null && (
+        <div className="dmsToast">
+          <span>{toast.text}</span>
+          {toast.actionLabel !== undefined && (
+            <button
+              className="dmsToastAction"
+              onClick={() => {
+                toast.onAction?.();
+                setToast(null);
+              }}
+            >
+              {toast.actionLabel}
+            </button>
+          )}
+        </div>
+      )}
       {drawer && (
         <ServerDrawer
           servers={servers}
@@ -1989,7 +2562,7 @@ export function TerminalWindow() {
 /* ---------------- sidebar entry (sidebar.footer.action) ---------------- */
 
 /**
- * One button at the sidebar foot that opens the Focus View (ADR-0005). The
+ * One button at the sidebar foot that opens the Terminal Window. The
  * sidebar's browsing and settings seats are single and occupied, so this is
  * the only incremental seat — nothing shipped is replaced.
  */
@@ -1997,8 +2570,8 @@ export function SidebarEntry({ wide }: { wide?: boolean }) {
   return (
     <button
       className={"dmsSidebarEntry" + (wide === false ? " isRail" : "")}
-      title="SSH 终端（专注视图）"
-      aria-label="SSH 终端（专注视图）"
+      title="SSH 终端窗口"
+      aria-label="SSH 终端窗口"
       onClick={() => setTerminalVisible(true)}
     >
       <span className="dmsSidebarEntryIcon" aria-hidden>
@@ -2009,18 +2582,149 @@ export function SidebarEntry({ wide }: { wide?: boolean }) {
   );
 }
 
+/* ---------------- right sidebar: servers + every session (U-1) ----------- */
+
+/**
+ * The global session viewport (restores the crashed Widgets panel). Lists the
+ * servers and ALL host sessions — placed and unplaced — with a status dot,
+ * the reclaim countdown for detached sessions, and per-row actions: place
+ * into the current item, open as a new tab, or kill (two-step confirm).
+ */
+function RightSidebar({
+  servers,
+  tabs,
+  collection,
+  reclaimAfterMs,
+  onStart,
+  onPlace,
+  onPlaceNew,
+  onKill,
+  onClose,
+}: {
+  servers: ServerView[];
+  tabs: TermTab[];
+  collection: any;
+  reclaimAfterMs: number;
+  onStart: (s: ServerView) => void;
+  onPlace: (sessionId: string) => void;
+  onPlaceNew: (sessionId: string) => void;
+  onKill: (id: string) => void;
+  onClose: () => void;
+}) {
+  const placed = new Set(collectAllSessions(collection));
+  const [confirmKill, setConfirmKill] = React.useState<string | null>(null);
+  const confirmTimer = React.useRef<number | null>(null);
+  /** Re-render every 30s so reclaim countdowns stay roughly fresh. */
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const t = window.setInterval(() => setTick((v) => v + 1), 30000);
+    return () => window.clearInterval(t);
+  }, []);
+  const dotClass = (t: TermTab) =>
+    t.status === "connecting" ? "dmsListDot isConnecting" : t.status === "live" ? "dmsListDot isLive" : "dmsListDot isClosed";
+  const askKill = (id: string) => {
+    if (confirmKill === id) {
+      if (confirmTimer.current !== null) window.clearTimeout(confirmTimer.current);
+      setConfirmKill(null);
+      onKill(id);
+      return;
+    }
+    setConfirmKill(id);
+    if (confirmTimer.current !== null) window.clearTimeout(confirmTimer.current);
+    confirmTimer.current = window.setTimeout(() => setConfirmKill(null), 3000);
+  };
+  const reclaimLabel = (t: TermTab) => {
+    if (t.lastDetachedAt == null) return null;
+    const remain = t.lastDetachedAt + reclaimAfterMs - Date.now();
+    if (remain <= 0) return "即将回收";
+    const mins = Math.max(1, Math.round(remain / 60000));
+    return `约 ${mins} 分钟后回收`;
+  };
+  return (
+    <div className="dmsSidebar" role="complementary" aria-label="会话">
+      <div className="dmsSidebarHead">
+        <span>会话</span>
+        <button className="dmsSidebarClose" onClick={onClose} title="关闭" aria-label="关闭会话面板">
+          {Icon.close()}
+        </button>
+      </div>
+      <div className="dmsSidebarSection">
+        <div className="dmsSidebarTitle">服务器</div>
+        {servers.length === 0 ? (
+          <div className="dmsSidebarEmpty">还没有配置服务器——点右上角齿轮添加</div>
+        ) : (
+          servers.map((s) => (
+            <button key={s.id} className="dmsSidebarRow" title={`连接 ${s.name}`} onClick={() => onStart(s)}>
+              <span className="dmsSidebarIcon">{Icon.terminal(13)}</span>
+              <span className="dmsSidebarLabel">{s.name}</span>
+              <span className="dmsListHint">
+                {s.username}@{s.host}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+      <div className="dmsSidebarSection">
+        <div className="dmsSidebarTitle">全部会话</div>
+        {tabs.length === 0 ? (
+          <div className="dmsSidebarEmpty">没有会话——点上方服务器连接</div>
+        ) : (
+          tabs.map((t) => (
+            <div key={t.id} className="dmsSidebarRow" style={{ cursor: "default" }}>
+              <span className="dmsSidebarIcon">
+                <span className={dotClass(t)} />
+              </span>
+              <span className="dmsSidebarLabel" title={t.label}>
+                {t.label}
+              </span>
+              <span className="dmsListHint">
+                {placed.has(t.id) ? "已放置" : reclaimLabel(t) ?? "未放置"}
+              </span>
+              <span className="dmsSrvAct" style={{ display: "flex", gap: 2 }}>
+                <button
+                  className="dmsIconBtn"
+                  title="放入当前组合 / 标签"
+                  aria-label="放入当前组合"
+                  onClick={() => onPlace(t.id)}
+                >
+                  {Icon.terminal(12)}
+                </button>
+                <button className="dmsIconBtn" title="开新标签" aria-label="开新标签" onClick={() => onPlaceNew(t.id)}>
+                  {Icon.plus()}
+                </button>
+                <button
+                  className="dmsIconBtn"
+                  title={confirmKill === t.id ? "确认终止？" : "终止会话"}
+                  aria-label="终止会话"
+                  style={confirmKill === t.id ? { color: "#ff8b93", background: "rgba(231,72,86,.2)" } : undefined}
+                  onClick={() => askKill(t.id)}
+                >
+                  {confirmKill === t.id ? <span style={{ fontSize: 11, fontWeight: 600 }}>确认</span> : Icon.close()}
+                </button>
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- server picker (inline) ---------------- */
 
 function ServerPicker({
   servers,
   busy,
   onPick,
+  onJoin,
   onManage,
   onClose,
 }: {
   servers: ServerView[];
   busy: boolean;
   onPick: (s: ServerView) => void;
+  /** U-2: open the session INTO the active item (workspace member / merge). */
+  onJoin?: (s: ServerView) => void;
   onManage: () => void;
   onClose: () => void;
 }) {
@@ -2032,7 +2736,7 @@ function ServerPicker({
         bottom: 8,
         left: 10,
         minWidth: 260,
-        maxWidth: 340,
+        maxWidth: 360,
         borderRadius: 10,
         padding: 8,
         boxShadow: "0 8px 28px rgba(0,0,0,.5)",
@@ -2041,20 +2745,33 @@ function ServerPicker({
     >
       <div className="dmsPickerLabel">选择服务器</div>
       {servers.map((s) => (
-        <button
-          key={s.id}
-          className="dmsPickerItem"
-          disabled={busy}
-          onClick={() => onPick(s)}
-        >
-          <span className="dmsPickerMeta">{Icon.terminal(13)}</span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {s.name}
-            <span className="dmsPickerMeta" style={{ marginLeft: 6, fontSize: 11 }}>
-              {s.username}@{s.host}
+        <div key={s.id} className="dmsPickerItem" style={{ cursor: "default", justifyContent: "flex-start" }}>
+          <button
+            className="dmsPickerItem"
+            style={{ flex: 1, minWidth: 0, padding: 0, border: "none", background: "transparent", color: "inherit", textAlign: "left", cursor: "pointer" }}
+            disabled={busy}
+            onClick={() => onPick(s)}
+          >
+            <span className="dmsPickerMeta">{Icon.terminal(13)}</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {s.name}
+              <span className="dmsPickerMeta" style={{ marginLeft: 6, fontSize: 11 }}>
+                {s.username}@{s.host}
+              </span>
             </span>
-          </span>
-        </button>
+          </button>
+          {onJoin !== undefined && (
+            <button
+              className="dmsPickerLink"
+              style={{ flex: "none", marginLeft: 6 }}
+              disabled={busy}
+              title="在当前组合 / 标签中并排打开"
+              onClick={() => onJoin(s)}
+            >
+              加入当前
+            </button>
+          )}
+        </div>
       ))}
       <div className="dmsPickerFoot">
         <button className="dmsPickerLink" onClick={onManage}>

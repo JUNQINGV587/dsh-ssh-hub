@@ -54,7 +54,7 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 
 ## Usage
 
-1. Click **SSH 终端** at the sidebar foot, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> — the Terminal Window opens (centred, remembered position/size). Double-click its title bar to maximize; <kbd>Esc</kbd> exits maximized, then closes the window. Drag the title bar to move (it stays on screen), the corner handle to resize.
+1. Click **SSH 终端** at the sidebar foot, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> — the Terminal Window opens (centred, remembered position/size). Double-click its title bar to maximize; <kbd>Esc</kbd> exits magnify/maximize one level (closing the window is the explicit ✕). Drag the title bar to move (it stays on screen), the corner handle to resize.
 2. Click **管理服务器** (Manage servers) → **添加服务器** (Add server) and fill in:
 
    | Field | Description |
@@ -72,11 +72,11 @@ Restart DSH afterwards, refresh the browser, and the terminal panel is available
 
    Use **测试连接** (Test) to verify before saving.
 
-3. Click **新会话** (New session) → pick a server → a session opens in the focused block (or a new one).
-4. **Watch several at once**: hover a block's title bar and use the four split buttons (← → ↑ ↓) to open panes left/right/top/bottom; drag the dividers to resize. Drag a block's title bar onto another block's **centre** to swap the two sessions, or onto its **edge** to open a new pane there — the drop zone lights up in colour. When the window is too small for another split, the split buttons simply don't fit (each pane keeps a minimum usable size).
-5. **Sessions you're not watching**: click a block's ✕ to remove it — the session returns to the **会话清单** (unplaced list, opened from the toolbar) and keeps running. Click a list entry to place it back into a block.
+3. **Open a session**: click the **会话** (Sessions) button in the window's tab bar and click a server — a session opens as its own tab. Or use **管理服务器** (Manage servers) → click/double-click a row.
+4. **Watch several at once**: click the **新建组合** (New group) button, tick the sessions, and they open side-by-side. Connect more servers with **加入当前** (Join current) to append them to the active group; drag the dividers to resize; magnify a member (hover it, or <kbd>Alt</kbd>+<kbd>m</kbd>) to fill the window. A group's ✕ dissolves it back into its member tabs.
+5. **Sessions you're not watching**: closing a tab removes the view only — the session keeps running on the host (a toast reminds you) and appears in the **会话** (Sessions) panel. From there you can place it back (**放入当前** into the active item, or **新标签** as its own tab) or terminate it (**终止**, two clicks to confirm). A detached session shows its reclaim countdown in the panel.
 6. Type, select-to-copy, right-click-to-paste. Theme: the toolbar **跟随界面 / 深色 / 浅色** button cycles the terminal theme; remembered per browser, applied to every open terminal instantly.
-7. **Your shells survive**: closing the window, removing a block, refreshing the page, or switching conversations detaches the UI but the sessions keep running on the host, reattaching with recent output replayed. Closing a session for good: remove its block, then ✕ it in the unplaced list (or delete the server). Sessions with no viewers are reclaimed after 30 minutes.
+7. **Your shells survive**: closing the window, removing a view, refreshing the page, or switching conversations detaches the UI but the sessions keep running on the host, reattaching with recent output replayed. A brief network blip reconnects automatically. Closing a session for good: **终止** it in the 会话 (Sessions) panel (or delete the server). Sessions with no viewers are reclaimed after 30 minutes by default — the window is configurable in the settings card (会话回收时长).
 8. Shortcuts are configurable: 设置 → 插件 → 插件配置 → DSH-SSH-HUB → 快捷键 (toggle window, maximize). Values are validated, DSH conflicts warn (not blocked), and changes apply immediately.
 9. On DSH ≥ 0.1.0-rc.7, the same card also sets the **Server Defaults** blank server fields inherit — including a default terminal theme used when a browser's override is **跟随界面**. The card's **管理服务器…** link jumps straight to the window's server drawer.
 10. Moving to a new machine? Use **导出配置** (Export) / **导入配置** (Import) in the manage-servers dialog. The exported JSON contains **no secrets** — re-enter passwords/keys after importing. Import always adds entries as new servers and never overwrites existing ones.
@@ -105,8 +105,8 @@ scripts/release.sh # tags HEAD, pushes, and creates the GitHub release
 
 ### How it works
 
-- **Host half** (`src/host/`) is a cordis plugin (`inject: ['webServer']`) exposing a REST API under `/ssh-hub` plus per-session WebSocket upgrade routes. SSH is driven by [`ssh2`](https://github.com/mscdex/ssh2). Terminal Sessions are **host-owned**: they survive any client detaching, keep a bounded scrollback ring (replayed on reattach), and are reclaimed after 30 minutes without viewers (`src/host/registry.ts`, `src/host/scrollback.ts`). The global **workspace collection** (workspaces of tabs of split trees) is served at `/ssh-hub/workspace` and broadcast over `/workspace/events`; dead-session leaves are emptied everywhere by the host.
-- **Client half** (`src/client/`) is a prebuilt React bundle: the Terminal Window renders in the `shell.overlay` slot (frame-wide, root scope), and a sidebar entry in `sidebar.footer.action` opens it. The split tree (`src/shared/splittree.mjs`), the workspace collection (`src/shared/workspace.mjs`), and keybinding parsing (`src/shared/keybind.mjs`) are pure DOM-free modules. Terminals use [`@xterm/xterm`](https://github.com/xtermjs/xterm.js).
+- **Host half** (`src/host/`) is a cordis plugin (`inject: ['webServer']`) exposing a REST API under `/ssh-hub` plus per-session WebSocket upgrade routes. SSH is driven by [`ssh2`](https://github.com/mscdex/ssh2). Terminal Sessions are **host-owned**: they survive any client detaching, keep a bounded scrollback ring (replayed on reattach), and are reclaimed after an idle window without viewers (default 30 min, configurable — `src/host/registry.ts`, `src/host/scrollback.ts`). The global **item collection** (tabs and flat groups) is served at `/ssh-hub/workspace` and broadcast over `/workspace/events`; dead-session items are dropped everywhere by the host.
+- **Client half** (`src/client/`) is a prebuilt React bundle: the Terminal Window renders in the `shell.overlay` slot (frame-wide, root scope), and a sidebar entry in `sidebar.footer.action` opens it. The flat groups (`src/shared/group.mjs`) and keybinding parsing (`src/shared/keybind.mjs`) are pure DOM-free modules. Terminals use [`@xterm/xterm`](https://github.com/xtermjs/xterm.js).
 - Session data flows: `xterm → ws → ssh2 stream → remote shell`, and back. Windowed and maximized states attach to the same sessions (multi-client broadcast).
 
 ### Integration tests

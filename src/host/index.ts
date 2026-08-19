@@ -35,6 +35,8 @@ import { defaultCollection, normalizeCollection, migrateLegacy } from "../shared
 const PREFIX = "/ssh-hub";
 /** Default idle reclaim for a session with no attached clients (ADR-0004). */
 const DEFAULT_IDLE_RECLAIM_MS = 30 * 60 * 1000;
+/** Settings-bound reclaim window in seconds (1–120; default 30 minutes). */
+const DEFAULT_IDLE_RECLAIM_SEC = 30;
 
 /**
  * @typedef {import("../shared/layout.mjs").TreeNode} TreeNode
@@ -78,11 +80,14 @@ export const inject = ["webServer"];
 export function apply(ctx: any, config: any) {
   const webServer = ctx.webServer;
   const store = new ServerStore(resolveDshHome());
-  /** Idle reclaim for sessions with no attached clients (ADR-0004); tests inject a short value. */
-  const idleReclaimMs =
+  /** Idle reclaim for sessions with no attached clients (ADR-0004); tests
+   *  inject a short value. The cordis config, when given, is authoritative —
+   *  the settings layer only drives the value when the config is absent. */
+  const configIdleReclaimMs =
     typeof config?.idleReclaimMs === "number" && config.idleReclaimMs > 0
       ? config.idleReclaimMs
-      : DEFAULT_IDLE_RECLAIM_MS;
+      : null;
+  let currentIdleReclaimMs = configIdleReclaimMs ?? DEFAULT_IDLE_RECLAIM_MS;
 
   /**
    * Current Server Defaults. Starts at the schema defaults; replaced when the
@@ -113,10 +118,25 @@ export function apply(ctx: any, config: any) {
         defaultTerminalTheme: z
           .union([z.const("auto"), z.const("dark"), z.const("light")])
           .default(DEFAULT_SERVER_DEFAULTS.defaultTerminalTheme),
+        idleReclaimSec: z
+          .number().step(1).min(1).max(120)
+          .default(DEFAULT_IDLE_RECLAIM_SEC),
       });
       installSettingsSection(ctx, settingsNamespace("ssh-hub"), Config, {}, {
         setSource: (source) => {
           currentDefaults = () => projectServerDefaults(source());
+          if (configIdleReclaimMs === null) {
+            const v = (source() ?? {}) as Record<string, unknown>;
+            const sec =
+              typeof v.idleReclaimSec === "number" &&
+              Number.isFinite(v.idleReclaimSec) &&
+              v.idleReclaimSec >= 1 &&
+              v.idleReclaimSec <= 120
+                ? v.idleReclaimSec
+                : DEFAULT_IDLE_RECLAIM_SEC;
+            currentIdleReclaimMs = sec * 60000;
+            registry?.setIdleReclaimMs(currentIdleReclaimMs);
+          }
         },
         onChange: () => {},
       });
@@ -136,7 +156,7 @@ export function apply(ctx: any, config: any) {
   };
 
   /** live terminal sessions: id -> session (host-owned, ADR-0004) */
-  const registry = new SessionRegistry(idleReclaimMs);
+  const registry = new SessionRegistry(currentIdleReclaimMs);
   /** id -> per-session WS upgrade route disposer */
   const upgradeDisposers = new Map<string, () => void>();
 
@@ -542,7 +562,13 @@ export function apply(ctx: any, config: any) {
               connectedAt: s.connectedAt,
               exited: s.exited,
               exitDetail: s.exitDetail,
+              // Reclaim countdown (ADR-0004): null while attached, otherwise
+              // the epoch ms the last client detached. The client shows the
+              // remaining window when the field is present.
+              lastDetachedAt: s.lastDetachedAt,
             })),
+            // Current reclaim window, for the client to render the countdown.
+            reclaimAfterMs: registry.idleReclaimMs,
           });
           return;
         }
