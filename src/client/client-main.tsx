@@ -205,6 +205,7 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsWinActions{flex:none;display:flex;gap:2px}
 .dmsWinAction{width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;display:grid;place-items:center;padding:0}
 .dmsWinAction:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsWinAction.isOn{color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
 .dmsWinTool{flex:none;display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip)}
 .dmsWinBody{flex:1;min-height:0;position:relative;background:var(--dmst-bg,#1e2128)}
 .dmsWinResize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:9}
@@ -285,8 +286,12 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsListClose:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsListBody{flex:1;min-height:0;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:4px}
 .dmsListEmpty{padding:16px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;text-align:center}
-.dmsListRow{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border-radius:7px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;text-align:left;cursor:pointer}
+.dmsListRow{display:flex;align-items:center;gap:8px;width:100%;padding:5px 6px;border-radius:7px;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12.5px}
 .dmsListRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsListLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:none;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:2px 0}
+.dmsListKill{flex:none;width:18px;height:18px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;opacity:0}
+.dmsListRow:hover .dmsListKill{opacity:.8}
+.dmsListKill:hover{opacity:1;background:rgba(231,72,86,.2);color:#ff8b93}
 .dmsListDot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--dsw-alias-label-tertiary)}
 .dmsListDot.isLive{background:#2ee62e}
 .dmsListLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1715,11 +1720,13 @@ function SessionListPanel({
   tabs,
   onPlace,
   onClose,
+  onKill,
 }: {
   collection: any;
   tabs: TermTab[];
   onPlace: (sessionId: string) => void;
   onClose: () => void;
+  onKill: (sessionId: string) => void;
 }) {
   const inTree = new Set(collectAllSessions(collection));
   const unplaced = tabs.filter((t) => !inTree.has(t.id));
@@ -1736,11 +1743,21 @@ function SessionListPanel({
           <div className="dmsListEmpty">没有未放置的会话（所有会话都在窗口中）</div>
         ) : (
           unplaced.map((t) => (
-            <button key={t.id} className="dmsListRow" onClick={() => onPlace(t.id)}>
+            <span key={t.id} className="dmsListRow">
               <span className={t.status === "live" ? "dmsListDot isLive" : "dmsListDot"} />
-              <span className="dmsListLabel">{t.label}</span>
+              <button className="dmsListLabel" onClick={() => onPlace(t.id)}>
+                {t.label}
+              </button>
               <span className="dmsListHint">点击放入</span>
-            </button>
+              <button
+                className="dmsListKill"
+                title="结束会话"
+                aria-label="结束会话"
+                onClick={() => onKill(t.id)}
+              >
+                {Icon.close()}
+              </button>
+            </span>
           ))
         )}
       </div>
@@ -2148,6 +2165,21 @@ export function TerminalWindow() {
       setBusy(false);
     }
   };
+  const killSession = async (id: string) => {
+    try {
+      await api("/sessions/" + id, { method: "DELETE" });
+    } catch {
+      /* already gone */
+    }
+    // reconcile from the host
+    try {
+      const body = await api("/sessions");
+      const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> = body.sessions ?? [];
+      setTabs(remote.map((s) => ({ id: s.id, serverId: s.serverId, label: s.serverName || s.label, status: s.exited ? "closed" : "connecting" })));
+    } catch {
+      /* host unreachable */
+    }
+  };
   const closeTab = async (id: string) => {
     try {
       await api("/sessions/" + id, { method: "DELETE" });
@@ -2200,6 +2232,18 @@ export function TerminalWindow() {
       <div className="dmsWinBar" onPointerDown={startMove} onClick={onBarClick}>
         <span className="dmsWinTitle">{Icon.terminal()} SSH 终端{stateLabel !== "" ? " · " + stateLabel : ""}</span>
         <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
+          <button className="dmsWinAction" title="新会话" aria-label="新会话" onClick={() => setPicker((v) => !v)} disabled={servers.length === 0}>
+            {Icon.plus()}
+          </button>
+          <button className="dmsWinAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
+            {Icon.gear()}
+          </button>
+          <button className={"dmsWinAction" + (listOpen ? " isOn" : "")} title="会话清单" aria-label="会话清单" onClick={() => setListOpen((v) => !v)}>
+            {Icon.list()}
+          </button>
+          <button className="dmsWinAction" title={"终端主题：" + OVERRIDE_LABEL[override]} aria-label="终端主题" onClick={cycleOverride}>
+            {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
+          </button>
           <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
             {maximized ? Icon.minimize() : Icon.maximize()}
           </button>
@@ -2306,27 +2350,6 @@ export function TerminalWindow() {
           </div>
         )}
       </div>
-      <div className="dmsWinTool">
-        <button className="dmsToolBtn" disabled={servers.length === 0 || busy} onClick={() => setPicker((v) => !v)}>
-          {Icon.plus()} 新会话
-        </button>
-        <button className="dmsToolBtn" onClick={() => setDrawer(true)}>
-          {Icon.gear()} 管理服务器（{servers.length}）
-        </button>
-        <button className={"dmsToolBtn" + (listOpen ? " isActive" : "")} onClick={() => setListOpen((v) => !v)} title="未放置的会话">
-          {Icon.list()} 会话清单{tabs.length - placedCount > 0 ? "（" + (tabs.length - placedCount) + "）" : ""}
-        </button>
-        <button
-          className="dmsToolBtn"
-          style={{ marginLeft: "auto" }}
-          title={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
-          aria-label={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
-          onClick={cycleOverride}
-        >
-          {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
-          {OVERRIDE_LABEL[override]}
-        </button>
-      </div>
       <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
         <SplitTreeView
           node={renderTree}
@@ -2354,6 +2377,7 @@ export function TerminalWindow() {
             tabs={tabs}
             onPlace={(id) => placeInto(id)}
             onClose={() => setListOpen(false)}
+            onKill={(id) => killSession(id)}
           />
         )}
         {picker && (
