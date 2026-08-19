@@ -47,6 +47,7 @@ import {
  * getSettingsScope is imported for module-internal use (the theme chain);
  * SettingsCard/setSettingsScope are re-exported for the build.mjs wrapper. */
 import { getSettingsScope } from "./settings-card.js";
+import { loadKeys, parseBinding, eventMatches, DEFAULT_KEYS } from "../shared/keybind.mjs";
 export { SettingsCard, setSettingsScope } from "./settings-card.js";
 
 const PREFIX = "/ssh-hub";
@@ -1936,25 +1937,61 @@ export function TerminalWindow() {
         else if (activePath !== null) toggleMagnify(activePath);
         return;
       }
-      const altShift = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
-      if (alt && e.key.toLowerCase() === "t") {
+      // Configurable bindings (Wave preset by default); read fresh each
+      // keydown so settings-card changes apply immediately.
+      const keys = loadKeys();
+      const match = (action: string) => eventMatches(e, parseBinding(keys[action] ?? DEFAULT_KEYS[action] ?? ""));
+      if (match("newTab")) {
         e.preventDefault();
         newTab();
         return;
       }
-      if (altShift && e.key.toLowerCase() === "w") {
+      if (match("closeTab")) {
         e.preventDefault();
         closeTabAt(ws.activeTab ?? 0);
         return;
       }
-      if (alt && e.key.toLowerCase() === "w") {
+      if (match("closeBlock")) {
         e.preventDefault();
         if (activePath !== null) removeBlockAt(activePath);
+        return;
+      }
+      if (match("splitH")) {
+        e.preventDefault();
+        if (activePath !== null) commitTree(treeSplit(renderTree, activePath, "h", null, false));
+        return;
+      }
+      if (match("splitV")) {
+        e.preventDefault();
+        if (activePath !== null) commitTree(treeSplit(renderTree, activePath, "v", null, false));
+        return;
+      }
+      if (match("magnify")) {
+        e.preventDefault();
+        if (magnifiedPath !== null) setMagnifiedPath(null);
+        else if (activePath !== null) toggleMagnify(activePath);
         return;
       }
       if (e.key === "F2") {
         e.preventDefault();
         setRenaming({ tab: ws.activeTab ?? 0, text: ws.tabs[ws.activeTab ?? 0]?.name ?? "" });
+        return;
+      }
+      // Fixed Wave-style numeric bindings (not configurable — they are key
+      // sequences): Alt+1-9 switches tabs, Ctrl+Shift+1-9 jumps to a block.
+      if (!e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        const target = Number(e.key) - 1;
+        if (target < ws.tabs.length) commit(setActiveTab(collection, wsIdx, target));
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        const target = Number(e.key);
+        const entry = [...numberByPath.entries()].find(([, n]) => n === target);
+        if (entry !== undefined) {
+          setActivePath(entry[0].split(".").map(Number));
+        }
       }
     };
     window.addEventListener("keydown", onKey);

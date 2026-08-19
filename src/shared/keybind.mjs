@@ -10,10 +10,28 @@
 
 export const KEYS_KEY = "dsh-ssh-hub.keys";
 
-/** Default bindings: window toggle + maximize. */
+/** All configurable actions. */
+export const ACTIONS = [
+  "toggleWindow",
+  "maximizeWindow",
+  "newTab",
+  "closeBlock",
+  "closeTab",
+  "splitH",
+  "splitV",
+  "magnify",
+];
+
+/** Wave-style defaults, Alt-based to dodge browser Ctrl+t/w capture. */
 export const DEFAULT_KEYS = {
   toggleWindow: "Ctrl+Shift+`",
   maximizeWindow: "Ctrl+Alt+`",
+  newTab: "Alt+t",
+  closeBlock: "Alt+w",
+  closeTab: "Alt+Shift+w",
+  splitH: "Alt+d",
+  splitV: "Alt+Shift+d",
+  magnify: "Alt+m",
 };
 
 /** DSH's own known shortcuts — a conflict here is warned, not blocked. */

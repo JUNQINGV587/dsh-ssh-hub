@@ -19,6 +19,7 @@ import {
   loadKeys,
   saveKeys,
   DEFAULT_KEYS,
+  ACTIONS,
 } from "../shared/keybind.mjs";
 
 /* ---------------- bound settings scope (injected by the wrapper) -------- */
@@ -137,6 +138,26 @@ if (typeof document !== "undefined" && document.getElementById(STYLE_TAG) === nu
 type Stage = { kind: "edit"; text: string } | { kind: "clear" };
 
 const EMPTY_SNAPSHOT: SettingsScopeSnapshot = { status: "unavailable" };
+
+const ACTION_LABELS: Record<string, string> = {
+  toggleWindow: "开关终端窗口",
+  maximizeWindow: "最大化 / 还原窗口",
+  newTab: "新标签页",
+  closeBlock: "关闭块（移出会话）",
+  closeTab: "关闭标签页",
+  splitH: "向右分割",
+  splitV: "向下分割",
+  magnify: "放大 / 还原块",
+};
+const ACTION_HINTS: Record<string, string> = {
+  toggleWindow: "例如 Ctrl+Shift+`；+ 连接修饰键与键位",
+  newTab: "Wave 预设 Alt+t",
+  closeBlock: "Wave 预设 Alt+w",
+  closeTab: "Wave 预设 Alt+Shift+w",
+  splitH: "Wave 预设 Alt+d",
+  splitV: "Wave 预设 Alt+Shift+d",
+  magnify: "Wave 预设 Alt+m",
+};
 
 /** One configurable shortcut: local draft, validation, conflict warning. */
 function KeyBindingRow({ label, action, hint }: { label: string; action: string; hint: string }) {
@@ -430,18 +451,11 @@ export function SettingsCard() {
 
       <div className="dmscField">
         <div className="dmscHead">
-          <div className="dmscLabel">快捷键（浏览器本地，立即生效）</div>
+          <div className="dmscLabel">快捷键（Wave 预设，浏览器本地，立即生效）</div>
         </div>
-        <KeyBindingRow
-          label="开关终端窗口"
-          action="toggleWindow"
-          hint="例如 Ctrl+Shift+`（输入时用 + 连接修饰键与键位）"
-        />
-        <KeyBindingRow
-          label="最大化 / 还原"
-          action="maximizeWindow"
-          hint="例如 Ctrl+Alt+`；Esc 在窗口内另有行为"
-        />
+        {ACTIONS.map((action) => (
+          <KeyBindingRow key={action} label={ACTION_LABELS[action] ?? action} action={action} hint={ACTION_HINTS[action] ?? ""} />
+        ))}
       </div>
 
       <div className="dmscFoot">
