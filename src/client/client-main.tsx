@@ -1939,7 +1939,7 @@ export function TerminalWindow() {
       }
       if (match("closeTab")) {
         e.preventDefault();
-        closeTabAt(ws.activeTab ?? 0);
+        closeTabAt(collection.activeTab ?? 0);
         return;
       }
       if (match("closeBlock")) {
@@ -1960,7 +1960,7 @@ export function TerminalWindow() {
       }
       if (e.key === "F2") {
         e.preventDefault();
-        setRenaming({ tab: ws.activeTab ?? 0, text: ws.tabs[ws.activeTab ?? 0]?.name ?? "" });
+        setRenaming({ tab: collection.activeTab ?? 0, text: collection.tabs[collection.activeTab ?? 0]?.name ?? "" });
         return;
       }
       // Fixed Wave-style numeric bindings (not configurable — they are key
@@ -2163,7 +2163,7 @@ export function TerminalWindow() {
           {collection.tabs.map((t, i) => (
             <span
               key={i}
-              className={"dmsTab" + (i === ws.activeTab ? " isActive" : "")}
+              className={"dmsTab" + (i === collection.activeTab ? " isActive" : "")}
               onDoubleClick={() => setRenaming({ tab: i, text: t.name })}
             >
               {renaming !== null && renaming.tab === i ? (
