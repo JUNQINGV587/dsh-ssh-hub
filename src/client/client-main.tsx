@@ -102,6 +102,7 @@ const CSS = `
 .dmsTabDot.isConnecting{background:#e8b339;animation:dmsPulse 1s ease-in-out infinite}
 .dmsTabDot.isLive{background:#2ee62e}
 .dmsTabDot.isClosed{background:#e74856}
+.dmsTabDot.isActivity{background:#e8b339;animation:dmsPulse 1s ease-in-out infinite}
 @keyframes dmsPulse{50%{opacity:.35}}
 .dmsTabClose{width:20px;height:20px;border:none;background:transparent;color:inherit;border-radius:6px;display:grid;place-items:center;cursor:pointer;padding:0;opacity:0;flex:none}
 .dmsTab:hover .dmsTabClose,.dmsTab.isActive .dmsTabClose{opacity:.65}
@@ -277,6 +278,7 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsBlockDot.isConnecting{background:#e8b339;animation:dmsPulse 1s ease-in-out infinite}
 .dmsBlockDot.isLive{background:#2ee62e}
 .dmsBlockDot.isClosed{background:#e74856}
+.dmsBlockDot.isActivity{background:#e8b339;animation:dmsPulse 1s ease-in-out infinite}
 .dmsBlockFloat{position:absolute;top:3px;right:5px;z-index:6;display:none;align-items:center;gap:1px;background:rgba(0,0,0,.35);border-radius:6px;padding:1px}
 .dmsBlock:hover .dmsBlockFloat{display:flex}
 .dmsSplitBtn,.dmsBlockRemove{width:20px;height:20px;border:none;background:transparent;color:#ddd;border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;font-size:11px}
@@ -309,6 +311,9 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 /* Window status strip: session summary + background-session count (U-5). */
 .dmsWinStatus{flex:none;display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;border-bottom:1px solid var(--wave-border);background:var(--wave-panel);color:var(--wave-secondary);font-size:11.5px;line-height:26px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmsWinStatus b{color:var(--wave-fg);font-weight:600}
+.dmsWinStatus .dmsRestoreBtn{flex:none;height:20px;padding:0 10px;border-radius:999px;border:1px solid var(--wave-border);background:transparent;color:var(--wave-fg);font:inherit;font-size:11px;font-weight:500;cursor:pointer;margin-left:auto}
+.dmsWinStatus .dmsRestoreBtn:hover{background:var(--wave-hover)}
+.dmsWinStatus .dmsRestoreBtn:disabled{opacity:.5;cursor:default}
 
 /* Toast (U-5): non-blocking close feedback with an optional action. */
 .dmsToast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:70;display:flex;align-items:center;gap:10px;max-width:70%;padding:8px 12px;border-radius:10px;background:var(--dsw-bg-card,#262a33);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.45);color:var(--dsw-alias-label-primary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;line-height:1.4}
@@ -488,6 +493,55 @@ function classifySshError(msg: string): { title: string; detail: string } {
   return { title: "连接失败", detail: m };
 }
 
+/* ---------------- local session/workspace snapshots (UX-0003, U-8) ------ */
+
+const SESSION_SNAP_KEY = "dsh-ssh-hub.sessions.snap";
+const WORKSPACE_SNAP_KEY = "dsh-ssh-hub.workspace.snap";
+
+interface SessionSnap {
+  at: number;
+  ids: string[];
+  labels: Record<string, string>;
+}
+
+function loadSessionSnapshot(): SessionSnap | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(SESSION_SNAP_KEY) ?? "");
+    if (v !== null && typeof v === "object" && Array.isArray(v.ids)) return v;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function saveSessionSnapshot(list: Array<{ id: string; label: string }>) {
+  if (list.length === 0) return;
+  try {
+    const labels: Record<string, string> = {};
+    for (const s of list) labels[s.id] = s.label;
+    localStorage.setItem(SESSION_SNAP_KEY, JSON.stringify({ at: Date.now(), ids: list.map((s) => s.id), labels }));
+  } catch {
+    /* storage full/blocked */
+  }
+}
+
+/** #44: last known item collection + the sessions it referenced. */
+interface WorkspaceSnap {
+  at: number;
+  collection: any;
+  sessions: Array<{ id: string; serverId: string; label: string }>;
+}
+
+function loadWorkspaceSnap(): WorkspaceSnap | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(WORKSPACE_SNAP_KEY) ?? "");
+    if (v !== null && typeof v === "object" && v.collection !== undefined && Array.isArray(v.sessions)) return v;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 type AuthKind = "password" | "privateKey" | "agent" | "none";
 
 interface ServerView {
@@ -523,6 +577,8 @@ interface TermTab {
   error?: string;
   /** Epoch ms of the last detach (host /sessions); null while attached. */
   lastDetachedAt?: number | null;
+  /** U-6: received output while this session was not being watched. */
+  activity?: boolean;
 }
 
 /* ---------------- small icons ---------------- */
@@ -624,6 +680,7 @@ function XtermPane({
   surface,
   onStatus,
   onReconnect,
+  quiet,
 }: {
   tab: TermTab;
   active: boolean;
@@ -633,6 +690,9 @@ function XtermPane({
   onStatus: (patch: Partial<TermTab>) => void;
   /** Opens a NEW session on the same server for an exited session (U-3). */
   onReconnect?: (tab: TermTab) => void;
+  /** U-6: true when the window is blurred — output then marks the session
+    *  as having new activity instead of being seen. */
+  quiet?: boolean;
 }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
   const termRef = React.useRef<Terminal | null>(null);
@@ -646,10 +706,19 @@ function XtermPane({
   const onStatusRef = React.useRef(onStatus);
   onStatusRef.current = onStatus;
   const registryKey = surface + ":" + tab.id;
+  // U-6: announce background activity once per quiet spell.
+  const announced = React.useRef(false);
+  const quietRef = React.useRef(quiet);
+  quietRef.current = quiet;
+  React.useEffect(() => {
+    if (quiet) return;
+    announced.current = false; // output is now visible again
+  }, [quiet]);
 
   React.useEffect(() => {
     const el = hostRef.current;
     if (el === null) return;
+    announced.current = false; // fresh session: start with no pending activity
     const term = new Terminal({
       cursorBlink: true,
       fontFamily:
@@ -715,6 +784,12 @@ function XtermPane({
           ev.data.arrayBuffer().then((buf) => term.write(new Uint8Array(buf)));
         } else {
           term.write(new Uint8Array(ev.data));
+        }
+        // U-6: background output → one activity announcement per quiet spell
+        // (parent dedupes and clears when the item is viewed / window focused).
+        if (quietRef.current && !announced.current) {
+          announced.current = true;
+          onStatusRef.current({ activity: true });
         }
       };
       next.onclose = () => {
@@ -1481,6 +1556,7 @@ function MemberTile({
   onClose,
   onRemove,
   onReconnect,
+  quiet,
 }: {
   member: { sessionId: string; name: string };
   tabs: TermTab[];
@@ -1490,14 +1566,17 @@ function MemberTile({
   onClose: () => void;
   onRemove: () => void;
   onReconnect?: (tab: TermTab) => void;
+  quiet?: boolean;
 }) {
   const tab = tabs.find((t) => t.id === member.sessionId);
   const dotClass =
-    tab === undefined || tab.status === "connecting"
-      ? "dmsBlockDot isConnecting"
-      : tab.status === "live"
-        ? "dmsBlockDot isLive"
-        : "dmsBlockDot isClosed";
+    tab?.activity === true
+      ? "dmsBlockDot isActivity"
+      : tab === undefined || tab.status === "connecting"
+        ? "dmsBlockDot isConnecting"
+        : tab.status === "live"
+          ? "dmsBlockDot isLive"
+          : "dmsBlockDot isClosed";
   return (
     <div className="dmsMember" onClick={() => onMagnify()}>
       <span className="dmsBlockBadge" title={member.name}>
@@ -1526,6 +1605,7 @@ function MemberTile({
         surface="window"
         onStatus={(patch) => onStatus(member.sessionId, patch)}
         onReconnect={onReconnect}
+        quiet={quiet}
       />
     </div>
   );
@@ -1545,6 +1625,7 @@ function ItemsView({
   openSidebar,
   onReconnect,
   onRemoveMember,
+  quiet,
 }: {
   collection: any;
   tabs: TermTab[];
@@ -1557,6 +1638,7 @@ function ItemsView({
   openSidebar: () => void;
   onReconnect?: (tab: TermTab) => void;
   onRemoveMember?: (sessionId: string) => void;
+  quiet?: boolean;
 }) {
   const it = collection.items[collection.activeIndex] ?? null;
   if (it === null) {
@@ -1588,6 +1670,7 @@ function ItemsView({
         surface="window"
         onStatus={(patch) => onStatus(it.sessionId!, patch)}
         onReconnect={onReconnect}
+        quiet={quiet}
       />
     );
   }
@@ -1619,6 +1702,7 @@ function ItemsView({
                   if (r.member !== null) onRemoveMember?.(r.member.sessionId);
                 }}
                 onReconnect={onReconnect}
+                quiet={quiet}
               />
             </div>
             {i < shown.length - 1 && (
@@ -1862,12 +1946,29 @@ function TerminalWindowFrame() {
   const [reclaimAfterMs, setReclaimAfterMs] = React.useState<number>(30 * 60 * 1000);
   /** U-2: group picker selection (session ids to merge into one workspace). */
   const [groupPick, setGroupPick] = React.useState<Set<string> | null>(null);
+  /** U-6: sessions of the active item — viewing them clears their activity. */
+  const activeSessions = React.useMemo(() => {
+    const it = collection.items[collection.activeIndex];
+    if (it === undefined) return new Set<string>();
+    if (it.kind === "tab") return it.sessionId === null ? new Set<string>() : new Set([it.sessionId]);
+    return new Set(it.members.map((m: any) => m.sessionId));
+  }, [collection]);
+  React.useEffect(() => {
+    // The active item's output is on screen — clear its activity flags (also
+    // on window focus, which makes every rendered pane visible again).
+    if (!focused && activeSessions.size === 0) return;
+    setTabs((prev) => prev.map((x) => (activeSessions.has(x.id) && x.activity === true ? { ...x, activity: false } : x)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focused, activeSessions]);
 
   /* ---- world state: sessions + servers (projections of host truth) ---- */
   React.useEffect(() => {
     if (!visible) return;
     refreshServers();
     refreshDefaults();
+    // UX-0003: remember which sessions existed last time, so a silent reclaim
+    // (or a host restart) is explained instead of looking like a user mistake.
+    const prevSnap = loadSessionSnapshot();
     api("/sessions")
       .then((b) => {
         const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean; lastDetachedAt?: number | null }> =
@@ -1882,6 +1983,16 @@ function TerminalWindowFrame() {
           })),
         );
         if (typeof b.reclaimAfterMs === "number" && b.reclaimAfterMs > 0) setReclaimAfterMs(b.reclaimAfterMs);
+        // explain sessions that vanished since the last visit
+        if (prevSnap !== null && prevSnap.ids.length > 0) {
+          const current = new Set(remote.map((s) => s.id));
+          const gone = prevSnap.ids.filter((id) => !current.has(id));
+          if (gone.length > 0 && Date.now() - prevSnap.at < 48 * 3600 * 1000) {
+            const sample = gone.length === 1 ? `「${prevSnap.labels[gone[0]] ?? "一个会话"}」` : `${gone.length} 个会话`;
+            showToast({ text: `上次的 ${sample} 已不在（可能已回收或手动结束）` });
+          }
+        }
+        saveSessionSnapshot(remote.map((s) => ({ id: s.id, label: s.serverName || s.label })));
         if (remote.length > 0 && collection.items.length === 0) {
           // no items yet: open the first session as its own tab
           commit({ ...collection, items: [{ kind: "tab", sessionId: remote[0].id, name: remote[0].label }], activeIndex: 0 });
@@ -2246,6 +2357,83 @@ function TerminalWindowFrame() {
     commitItems({ items: kept, activeIndex: Math.max(0, kept.length - 1) });
     setGroupPick(null);
   };
+  /** #44: reopen the sessions of a saved layout and rebuild the items with
+    *  the fresh ids. Sessions live only on the host, so "restore" reconnects;
+    *  servers that no longer exist are skipped and reported. */
+  const restoreLayout = async () => {
+    const snap = loadWorkspaceSnap();
+    if (snap === null) return;
+    setBusy(true);
+    try {
+      const serverById = new Map(servers.map((s) => [s.id, s]));
+      const sessionInfo = new Map(snap.sessions.map((s) => [s.id, s]));
+      const order: string[] = [];
+      for (const it of snap.collection.items) {
+        if (it.kind === "tab" && it.sessionId !== null) order.push(it.sessionId);
+        else if (it.kind === "workspace") for (const m of it.members) order.push(m.sessionId);
+      }
+      const idMap = new Map<string, string>();
+      const failed: string[] = [];
+      for (const oldId of order) {
+        const info = sessionInfo.get(oldId);
+        const server = info === undefined ? undefined : serverById.get(info.serverId);
+        if (server === undefined) {
+          failed.push(info?.label ?? oldId);
+          continue;
+        }
+        try {
+          const body = await api("/sessions", { method: "POST", body: JSON.stringify({ serverId: server.id, cols: 80, rows: 24 }) });
+          idMap.set(oldId, body.id);
+          setTabs((prev) => [
+            ...prev,
+            { id: body.id, serverId: server.id, label: body.serverName || info?.label || server.name, status: "connecting" },
+          ]);
+        } catch {
+          failed.push(info?.label ?? oldId);
+        }
+      }
+      const items = snap.collection.items
+        .map((it: any) => {
+          if (it.kind === "tab") {
+            return it.sessionId !== null && idMap.has(it.sessionId) ? { ...it, sessionId: idMap.get(it.sessionId) } : null;
+          }
+          if (it.kind === "workspace") {
+            const members = it.members
+              .map((m: any) => (idMap.has(m.sessionId) ? { ...m, sessionId: idMap.get(m.sessionId) } : null))
+              .filter((m: any) => m !== null);
+            if (members.length === 0) return null;
+            if (members.length === 1) return { kind: "tab", sessionId: members[0].sessionId, name: members[0].name };
+            return { ...it, members, sizes: it.sizes.slice(0, members.length) };
+          }
+          return null;
+        })
+        .filter((it: any) => it !== null);
+      commitItems({ items, activeIndex: Math.min(snap.collection.activeIndex ?? 0, Math.max(0, items.length - 1)) });
+      if (failed.length > 0) {
+        showToast({ text: `${failed.length} 个会话未能恢复（对应服务器可能已删除）` });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  /** #44: keep a local snapshot of the layout + its sessions, so a host
+    *  restart (which wipes the in-memory collection) can offer a restore. */
+  const canRestore = collection.items.length === 0 && loadWorkspaceSnap() !== null && servers.length > 0;
+  React.useEffect(() => {
+    if (collection.items.length === 0 || tabs.length === 0) return;
+    try {
+      localStorage.setItem(
+        WORKSPACE_SNAP_KEY,
+        JSON.stringify({
+          at: Date.now(),
+          collection,
+          sessions: tabs.map((t) => ({ id: t.id, serverId: t.serverId, label: t.label })),
+        }),
+      );
+    } catch {
+      /* storage full/blocked */
+    }
+  }, [collection, tabs]);
   /** U-3: a session that exited gets a NEW session on the same server,
    *  swapped into the same item slot. */
   const reconnectSession = async (old: TermTab) => {
@@ -2307,7 +2495,9 @@ function TerminalWindowFrame() {
 
   if (!visible && !closing) return null;
 
-  const placedCount = collectAllSessions(collection).length;
+  const placedSessions = collectAllSessions(collection);
+  const placedSet = new Set(placedSessions);
+  const placedCount = placedSessions.length;
   const unplacedCount = Math.max(0, tabs.length - placedCount);
   const stateLabel =
     tabs.length === 0
@@ -2315,6 +2505,21 @@ function TerminalWindowFrame() {
         ? "未配置服务器"
         : "就绪"
       : `${placedCount} 个会话在窗口中`;
+  // UX-0003: nearest reclaim among detached background sessions, so the
+  // countdown is visible in the strip before the window is collapsed.
+  let minRemainMs = Infinity;
+  for (const t of tabs) {
+    if (t.lastDetachedAt == null) continue;
+    if (placedSet.has(t.id)) continue;
+    minRemainMs = Math.min(minRemainMs, t.lastDetachedAt + reclaimAfterMs - Date.now());
+  }
+  const reclaimText =
+    Number.isFinite(minRemainMs) && minRemainMs > 0
+      ? `约 ${Math.max(1, Math.round(minRemainMs / 60000))} 分钟后回收`
+      : Number.isFinite(minRemainMs)
+        ? "即将回收"
+        : null;
+  const activityCount = tabs.reduce((n, t) => (t.activity === true ? n + 1 : n), 0);
 
   return (
     <div
@@ -2337,12 +2542,30 @@ function TerminalWindowFrame() {
         }}
       >
         <div className="dmsTabList" role="tablist">
-          {collection.items.map((it, i) => (
+          {collection.items.map((it, i) => {
+            const itTab = it.kind === "tab" && it.sessionId !== null ? tabs.find((t) => t.id === it.sessionId) : undefined;
+            const itDot =
+              itTab === undefined
+                ? null
+                : itTab.activity === true
+                  ? "isActivity"
+                  : itTab.status === "connecting"
+                    ? "isConnecting"
+                    : itTab.status === "live"
+                      ? "isLive"
+                      : "isClosed";
+            return (
             <span
               key={i}
               className={"dmsTab" + (i === collection.activeIndex ? " isActive" : "") + (it.kind === "workspace" ? " isGroup" : "")}
               onDoubleClick={() => setRenaming({ tab: i, text: it.name })}
             >
+              {itDot !== null && (
+                <span
+                  className={"dmsTabDot " + itDot}
+                  title={itTab?.status === "live" ? "在线" : itTab?.status === "connecting" ? "连接中" : itTab?.activity === true ? "有新输出" : "已断开"}
+                />
+              )}
               {renaming !== null && renaming.tab === i ? (
                 <input
                   className="dmsTabEdit"
@@ -2377,7 +2600,8 @@ function TerminalWindowFrame() {
                 {Icon.close()}
               </button>
             </span>
-          ))}
+            );
+          })}
         </div>
         <button className="dmsTabAdd" title="新标签页（Alt+t）" aria-label="新标签页" onClick={newTab}>
           {Icon.plus()}
@@ -2408,8 +2632,19 @@ function TerminalWindowFrame() {
         {unplacedCount > 0 && (
           <>
             {" · "}
-            <b>{unplacedCount}</b> 个会话在后台运行
+            <b>{unplacedCount}</b> 个会话在后台运行{reclaimText !== null && ` · ${reclaimText}`}
           </>
+        )}
+        {activityCount > 0 && !focused && (
+          <>
+            {" · "}
+            <b style={{ color: "#e8b339" }}>{activityCount} 个会话有新输出</b>
+          </>
+        )}
+        {canRestore && (
+          <button className="dmsRestoreBtn" onClick={restoreLayout} disabled={busy}>
+            {busy ? "恢复中…" : "恢复上次布局"}
+          </button>
         )}
       </div>
       <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
@@ -2432,6 +2667,7 @@ function TerminalWindowFrame() {
                 onAction: () => killSession(sid),
               })
             }
+            quiet={!focused}
           />
           {picker && (
             <ServerPicker

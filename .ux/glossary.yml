@@ -1,0 +1,6 @@
+terms:
+  - canonical: Workspace
+    variants:
+      - 组合
+    note: 代码/CONTEXT 规范词为 Workspace（平面并排组合），UI 中文文案用「组合」（新建组合/加入当前）。
+
