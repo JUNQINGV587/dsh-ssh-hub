@@ -330,9 +330,10 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsWsMember.isDropswap{box-shadow:0 0 0 2px var(--wave-accent,#58c142)}
 .dmsTab.isDropTarget{border-color:var(--wave-accent,#58c142);color:var(--wave-fg)}
 
-/* U-18: per-server color bar on tabs / dot in badges and panel rows. */
+/* U-18: per-server color bar on tabs / square identity chip in badges and
+   panel rows (a square, not a dot, so it never reads as a status dot). */
 .dmsTab{border-left:3px solid transparent}
-.dmsColorDot{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block;margin-right:6px;vertical-align:middle}
+.dmsColorDot{width:7px;height:7px;border-radius:3px;flex:none;display:inline-block;margin-right:6px;vertical-align:middle}
 
 /* Esc exit hint: persistent while magnified or maximized (U-4). */
 .dmsEscHint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;box-shadow:0 4px 14px rgba(0,0,0,.3);backdrop-filter:blur(4px)}
@@ -490,8 +491,10 @@ async function api(path: string, opts?: RequestInit) {
 }
 
 /** U-18: stable per-server color dot, so sessions on one server read as one
- *  family across the tab strip, member badges and the sessions panel. */
-const SERVER_COLORS = ["#58c142", "#4c8dff", "#e8b339", "#e74856", "#c07bf0", "#2eb8c1", "#e87ba0", "#9aa0a6"];
+ *  family across the tab strip, member badges and the sessions panel. The
+ *  palette deliberately avoids the status colors (green/amber/red) so the
+ *  identity dot never reads as a connection state. */
+const SERVER_COLORS = ["#4c8dff", "#c07bf0", "#2eb8c1", "#e87ba0", "#f2994a", "#8a93a6"];
 function serverColor(serverId: string): string {
   let h = 0;
   for (let i = 0; i < serverId.length; i++) h = (h * 31 + serverId.charCodeAt(i)) >>> 0;
