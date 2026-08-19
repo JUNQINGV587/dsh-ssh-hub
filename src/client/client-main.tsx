@@ -18,16 +18,17 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "../shared/terminal-themes.mjs";
 import {
-  newTree,
-  split as treeSplit,
-  removeLeaf as treeRemoveLeaf,
-  setSession as treeSetSession,
-  swapSessions as treeSwapSessions,
-  setRatio as treeSetRatio,
-  collectSessions as collectTreeSessions,
-  findPath,
-  replaceSubtree,
-} from "../shared/splittree.mjs";
+  newBlock,
+  autoPlace as layoutAutoPlace,
+  removeBlock as layoutRemoveBlock,
+  setSession as layoutSetSession,
+  dropBlock as layoutDropBlock,
+  resizeNode as layoutResizeNode,
+  nodeAt as layoutNodeAt,
+  findArr as layoutFindArr,
+  collectSessions as collectLayoutSessions,
+  layoutReplaceAt,
+} from "../shared/layout.mjs";
 import {
   defaultCollection,
   activeTree,
@@ -241,6 +242,21 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsWsFoot{flex:none;display:flex;gap:6px;padding:6px 2px 2px;border-top:1px solid var(--dsw-alias-border-l1);margin-top:4px}
 .dmsWsNew{flex:1;height:26px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:7px;font-family:Inter,var(--dsw-font-family);font-size:11.5px;cursor:pointer}
 .dmsWsNew:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* Right sidebar (Wave widget picker, spec #32) */
+.dmsSidebar{position:absolute;top:0;right:0;bottom:0;width:240px;z-index:10;display:flex;flex-direction:column;background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border-left:1px solid var(--dsw-alias-border-l1);box-shadow:-8px 0 24px rgba(0,0,0,.3);overflow:hidden}
+.dmsSidebarHead{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dmsSidebarClose{margin-left:auto;width:24px;height:24px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:6px;cursor:pointer;display:grid;place-items:center;padding:0}
+.dmsSidebarClose:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsSidebarSection{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 6px;overflow-y:auto}
+.dmsSidebarSection + .dmsSidebarSection{border-top:1px solid var(--dsw-alias-border-l1)}
+.dmsSidebarTitle{flex:none;padding:2px 6px 6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary)}
+.dmsSidebarEmpty{padding:8px 6px;font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.dmsSidebarRow{display:flex;align-items:center;gap:8px;width:100%;padding:6px;border-radius:7px;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12.5px}
+button.dmsSidebarRow{border:none;background:transparent;text-align:left;cursor:pointer}
+button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsSidebarIcon{flex:none;display:grid;place-items:center}
+.dmsSidebarLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:none;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:0}
 
 /* Split tree */
 .dmsSplit{position:relative;display:flex;min-width:0;min-height:0;height:100%}
@@ -1233,12 +1249,7 @@ function prefersReducedMotion() {
 
 /* ---------------- split tree view ---------------- */
 
-const SPLIT_DIR_LABEL: Record<string, { title: string; cls: string }> = {
-  left: { title: "左边分割", cls: "dmsSplitBtn-left" },
-  right: { title: "右边分割", cls: "dmsSplitBtn-right" },
-  top: { title: "上边分割", cls: "dmsSplitBtn-top" },
-  bottom: { title: "下边分割", cls: "dmsSplitBtn-bottom" },
-};
+
 
 /**
  * Recursive renderer for the workspace tree. A Leaf renders a Block (a
@@ -1282,7 +1293,7 @@ function SplitTreeView({
   onMagnify: (path: number[]) => void;
   isMagnified: boolean;
 }) {
-  if (node.kind === "leaf") {
+  if (node.kind === "block") {
     return (
       <BlockView
         path={path}
@@ -1303,48 +1314,42 @@ function SplitTreeView({
       />
     );
   }
-  const isH = node.dir === "h";
+  const isRow = node.dir === "row";
+  const total = node.sizes.reduce((a, b) => a + b, 0) || node.children.length;
   return (
-    <div className={"dmsSplit" + (isH ? " isH" : " isV")}>
-      <div className="dmsSplitPane" style={{ flex: isH ? `\${node.ratio * 100}% 1 0` : `1 1 \${node.ratio * 100}%` }}>
-        <SplitTreeView
-          node={node.a}
-          path={[...path, 0]}
-          tree={tree}
-          commitTree={commitTree}
-          tabs={tabs}
-          activePath={activePath}
-          onFocusBlock={onFocusBlock}
-          onStatus={onStatus}
-          onEmptyClick={onEmptyClick}
-          numberByPath={numberByPath}
-          blockSize={isH ? { w: blockSize.w * node.ratio, h: blockSize.h } : { w: blockSize.w, h: blockSize.h * node.ratio }}
-          drag={drag}
-          onDrag={onDrag}
-          onMagnify={onMagnify}
-          isMagnified={isMagnified}
-        />
-      </div>
-      <Divider path={path} dir={node.dir} tree={tree} commitTree={commitTree} container={blockSize} />
-      <div className="dmsSplitPane" style={{ flex: isH ? `\${(1 - node.ratio) * 100}% 1 0` : `1 1 \${(1 - node.ratio) * 100}%` }}>
-        <SplitTreeView
-          node={node.b}
-          path={[...path, 1]}
-          tree={tree}
-          commitTree={commitTree}
-          tabs={tabs}
-          activePath={activePath}
-          onFocusBlock={onFocusBlock}
-          onStatus={onStatus}
-          onEmptyClick={onEmptyClick}
-          numberByPath={numberByPath}
-          blockSize={isH ? { w: blockSize.w * (1 - node.ratio), h: blockSize.h } : { w: blockSize.w, h: blockSize.h * (1 - node.ratio) }}
-          drag={drag}
-          onDrag={onDrag}
-          onMagnify={onMagnify}
-          isMagnified={isMagnified}
-        />
-      </div>
+    <div className={"dmsSplit" + (isRow ? " isH" : " isV")}>
+      {node.children.map((child, i) => {
+        const sizePct = total > 0 ? (node.sizes[i] / total) * 100 : 100 / node.children.length;
+        const childSize = isRow
+          ? { w: blockSize.w * (sizePct / 100), h: blockSize.h }
+          : { w: blockSize.w, h: blockSize.h * (sizePct / 100) };
+        return (
+          <React.Fragment key={i}>
+            <div className="dmsSplitPane" style={{ flex: `${sizePct}% 1 0` }}>
+              <SplitTreeView
+                node={child}
+                path={[...path, i]}
+                tree={tree}
+                commitTree={commitTree}
+                tabs={tabs}
+                activePath={activePath}
+                onFocusBlock={onFocusBlock}
+                onStatus={onStatus}
+                onEmptyClick={onEmptyClick}
+                numberByPath={numberByPath}
+                blockSize={childSize}
+                drag={drag}
+                onDrag={onDrag}
+                onMagnify={onMagnify}
+                isMagnified={isMagnified}
+              />
+            </div>
+            {i < node.children.length - 1 && (
+              <Divider path={[...path, i]} dir={node.dir} tree={tree} commitTree={commitTree} container={blockSize} />
+            )}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -1381,7 +1386,7 @@ function Divider({
     };
     const up = () => {
       if (dragRef.current !== null && overriding !== null) {
-        commitTree(treeSetRatio(tree, path, overriding));
+        commitTree(layoutResizeNode(tree, path, overriding));
       }
       dragRef.current = null;
       setOverriding(null);
@@ -1394,28 +1399,22 @@ function Divider({
     };
   }, [dir, container.w, container.h, tree, path, commitTree, overriding]);
 
-  const node = nodeAtPath(tree, path);
-  const shown = overriding ?? (node?.kind === "split" ? node.ratio : 0.5);
+  const shown = overriding ?? 0.5;
   return (
     <div
-      className={"dmsDivider" + (dir === "h" ? " isV" : " isH")}
+      className={"dmsDivider" + (dir === "row" ? " isV" : " isH")}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
         dragRef.current = { x: e.clientX, y: e.clientY, ratio: shown };
       }}
-      style={dir === "h" ? { left: `calc(\${shown * 100}% - 3px)` } : { top: `calc(\${shown * 100}% - 3px)` }}
+      style={dir === "row" ? { left: `calc(${shown * 100}% - 3px)` } : { top: `calc(${shown * 100}% - 3px)` }}
     />
   );
 }
 
 function nodeAtPath(tree: any, path: number[]): any {
-  let node = tree;
-  for (const step of path) {
-    if (node.kind !== "split") return undefined;
-    node = step === 0 ? node.a : node.b;
-  }
-  return node;
+  return layoutNodeAt(tree, path);
 }
 
 /** One block: a slim title bar over the terminal (or an empty slot). */
@@ -1504,16 +1503,11 @@ function BlockView({
       ? drag.hover.zone
       : null;
 
-  const splitBtn = (dir: "left" | "right" | "top" | "bottom") => {
-    const d = dir === "left" || dir === "right" ? "h" : "v";
-    const newFirst = dir === "left" || dir === "top";
-    const next = treeSplit(tree, path, d, null, newFirst);
-    commitTree(next);
-  };
   const remove = () => {
-    // Remove the block (its session, if any, returns to the unplaced list).
-    const [next] = treeRemoveLeaf(tree, path);
-    commitTree(next ?? newTree(null));
+    // Remove the block (its session, if any, returns to the unplaced list);
+    // the tree compresses depth automatically.
+    const [next] = layoutRemoveBlock(tree, path);
+    commitTree(next ?? newBlock(null));
   };
 
   const dragClass =
@@ -1579,20 +1573,6 @@ function BlockView({
           >
             {isMagnified ? Icon.minimize() : Icon.maximize()}
           </button>
-          {(Object.keys(SPLIT_DIR_LABEL) as Array<"left" | "right" | "top" | "bottom">).map((d) => (
-            <button
-              key={d}
-              className={"dmsSplitBtn " + SPLIT_DIR_LABEL[d].cls}
-              title={SPLIT_DIR_LABEL[d].title}
-              aria-label={SPLIT_DIR_LABEL[d].title}
-              onClick={(e) => {
-                e.stopPropagation();
-                splitBtn(d);
-              }}
-            >
-              {d === "left" ? "←" : d === "right" ? "→" : d === "top" ? "↑" : "↓"}
-            </button>
-          ))}
           <button className="dmsBlockRemove" title="移除（会话回到未放置清单）" aria-label="移除" onClick={(e) => { e.stopPropagation(); remove(); }}>
             {Icon.close()}
           </button>
@@ -1719,47 +1699,61 @@ function saveWin(v: { x: number; y: number; w: number; h: number }) {
   }
 }
 
-/** The unplaced-session list: sessions not currently in any workspace tab. */
-function SessionListPanel({
-  collection,
+/** Wave-style widget picker on the window's right edge: servers to start a
+ *  new session (auto-placed) and unplaced sessions to place back into the
+ *  layout. Replaces the title-bar placement icons (spec #32). */
+function RightSidebar({
+  servers,
   tabs,
+  collection,
+  onStart,
   onPlace,
-  onClose,
   onKill,
+  onClose,
 }: {
-  collection: any;
+  servers: ServerView[];
   tabs: TermTab[];
+  collection: any;
+  onStart: (s: ServerView) => void;
   onPlace: (sessionId: string) => void;
-  onClose: () => void;
   onKill: (sessionId: string) => void;
+  onClose: () => void;
 }) {
-  const inTree = new Set(collectAllSessions(collection));
+  const inTree = new Set(collectLayoutSessions(collection));
   const unplaced = tabs.filter((t) => !inTree.has(t.id));
   return (
-    <div className="dmsListPanel">
-      <div className="dmsListHead">
-        <span>会话清单</span>
-        <button className="dmsListClose" onClick={onClose} aria-label="关闭清单">
+    <div className="dmsSidebar">
+      <div className="dmsSidebarHead">
+        <span>Widgets</span>
+        <button className="dmsSidebarClose" onClick={onClose} aria-label="关闭侧栏">
           {Icon.close()}
         </button>
       </div>
-      <div className="dmsListBody">
+      <div className="dmsSidebarSection">
+        <div className="dmsSidebarTitle">服务器</div>
+        {servers.length === 0 ? (
+          <div className="dmsSidebarEmpty">先添加一台服务器</div>
+        ) : (
+          servers.map((s) => (
+            <button key={s.id} className="dmsSidebarRow" onClick={() => onStart(s)} title={s.username + "@" + s.host}>
+              <span className="dmsSidebarIcon">{Icon.terminal(13)}</span>
+              <span className="dmsSidebarLabel">{s.name}</span>
+            </button>
+          ))
+        )}
+      </div>
+      <div className="dmsSidebarSection">
+        <div className="dmsSidebarTitle">未放置会话</div>
         {unplaced.length === 0 ? (
-          <div className="dmsListEmpty">没有未放置的会话（所有会话都在窗口中）</div>
+          <div className="dmsSidebarEmpty">没有未放置的会话</div>
         ) : (
           unplaced.map((t) => (
-            <span key={t.id} className="dmsListRow">
+            <span key={t.id} className="dmsSidebarRow">
               <span className={t.status === "live" ? "dmsListDot isLive" : "dmsListDot"} />
-              <button className="dmsListLabel" onClick={() => onPlace(t.id)}>
+              <button className="dmsSidebarLabel" onClick={() => onPlace(t.id)}>
                 {t.label}
               </button>
-              <span className="dmsListHint">点击放入</span>
-              <button
-                className="dmsListKill"
-                title="结束会话"
-                aria-label="结束会话"
-                onClick={() => onKill(t.id)}
-              >
+              <button className="dmsListKill" title="结束会话" aria-label="结束会话" onClick={() => onKill(t.id)}>
                 {Icon.close()}
               </button>
             </span>
@@ -1770,15 +1764,6 @@ function SessionListPanel({
   );
 }
 
-/**
- * The Terminal Window: one floating, draggable, resizable window over the
- * whole GUI (registered in shell.overlay, root scope). It is a viewport over
- * the single global workspace tree (ADR-0006); maximized it fills the frame.
- * The title bar drags (clamped to keep it visible), double-click maximizes,
- * the corner handle resizes, opening uses a scale+fade animation (skipped
- * under prefers-reduced-motion), and when the window loses focus only the
- * frame dims — terminal content always stays fully readable.
- */
 export function TerminalWindow() {
   const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
   const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
@@ -1786,6 +1771,7 @@ export function TerminalWindow() {
   const [wsOpen, setWsOpen] = React.useState(false);
   const [magnifiedPath, setMagnifiedPath] = React.useState<number[] | null>(null);
   const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
   /** The active (workspace, tab) tree and a commit that writes it back.
    *  When a block is magnified, the rendered tree is that subtree and writes
    *  land back at its path (splitting inside a magnified block mutates the
@@ -1795,7 +1781,7 @@ export function TerminalWindow() {
   const commitTree = React.useCallback(
     (nextTree: any) => {
       if (magnifiedPath !== null) {
-        commit(setActiveTree(collection, replaceSubtree(tree, magnifiedPath, nextTree)));
+        commit(setActiveTree(collection, layoutReplaceAt(tree, magnifiedPath, nextTree)));
       } else {
         commit(setActiveTree(collection, nextTree));
       }
@@ -1818,7 +1804,6 @@ export function TerminalWindow() {
   const [picker, setPicker] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [activePath, setActivePath] = React.useState<number[] | null>(null);
-  const [listOpen, setListOpen] = React.useState(false);
   const [win, setWin] = React.useState(loadWin);
   const [size, setSize] = React.useState({ w: 0, h: 0 });
   const [focused, setFocused] = React.useState(true);
@@ -1850,7 +1835,7 @@ export function TerminalWindow() {
         );
         if (remote.length > 0 && activePath === null) {
           // focus the first block holding a session, if any
-          const p = findPath(tree, remote[0].id);
+          const p = layoutFindArr(tree, remote[0].id);
           if (p !== null) setActivePath(p);
         }
       })
@@ -1928,12 +1913,9 @@ export function TerminalWindow() {
     const up = (e: PointerEvent) => {
       if (drag !== null && drag.hover !== null && inWindow(e.target)) {
         if (drag.hover.zone === "swap") {
-          commitTree(treeSwapSessions(tree, drag.fromPath, drag.hover.path));
-        } else {
-          const dir = drag.hover.zone === "left" || drag.hover.zone === "right" ? "h" : "v";
-          const newFirst = drag.hover.zone === "left" || drag.hover.zone === "top";
-          commitTree(treeSplit(tree, drag.hover.path, dir, drag.sessionId, newFirst));
+          commitTree(layoutDropBlock(tree, drag.fromPath, drag.hover.path, "swap"));
         }
+        // other zones arrive with the 7-target drag in ticket #36
       }
       setDrag(null);
     };
@@ -1982,14 +1964,9 @@ export function TerminalWindow() {
         if (activePath !== null) removeBlockAt(activePath);
         return;
       }
-      if (match("splitH")) {
+      if (match("splitH") || match("splitV")) {
         e.preventDefault();
-        if (activePath !== null) commitTree(treeSplit(renderTree, activePath, "h", null, false));
-        return;
-      }
-      if (match("splitV")) {
-        e.preventDefault();
-        if (activePath !== null) commitTree(treeSplit(renderTree, activePath, "v", null, false));
+        commitTree(layoutAutoPlace(renderTree, null));
         return;
       }
       if (match("magnify")) {
@@ -2059,8 +2036,8 @@ export function TerminalWindow() {
     if (name !== null && name.trim().length > 0) commit(renameWorkspace(collection, idx, name.trim()));
   };
   const removeBlockAt = (path: number[]) => {
-    const [next] = treeRemoveLeaf(tree, path);
-    commitTree(next ?? newTree(null));
+    const [next] = layoutRemoveBlock(tree, path);
+    commitTree(next ?? newBlock(null));
   };
 
   /* ---- window chrome: move (clamped) / resize / maximize ---- */
@@ -2151,12 +2128,13 @@ export function TerminalWindow() {
     // occupied leaf would destroy it — so replace the focused block instead).
     let target = activePath;
     if (target !== null && nodeAtPath(tree, target)?.sessionId !== null) target = null;
-    if (target === null) {
-      const empty = findEmptyLeaf(tree);
-      target = empty ?? activePath ?? [];
+    if (target === null) target = findEmptyLeaf(tree);
+    if (target !== null) {
+      commitTree(layoutSetSession(tree, target, sessionId));
+    } else {
+      commitTree(layoutAutoPlace(tree, sessionId));
     }
-    if (target !== null) commitTree(treeSetSession(tree, target, sessionId));
-    setListOpen(false);
+    setSidebarOpen(false);
   };
   const connectTo = async (s: ServerView) => {
     setBusy(true);
@@ -2166,11 +2144,9 @@ export function TerminalWindow() {
       const tab: TermTab = { id: body.id, serverId: s.id, label: s.name || `${s.username}@${s.host}`, status: "connecting" };
       setTabs((prev) => [...prev, tab]);
       // open it in the focused block (or the first empty leaf / a new right split)
-      let target = activePath;
-      if (target !== null && nodeAtPath(tree, target)?.sessionId !== null) target = null;
-      if (target === null) target = findEmptyLeaf(tree) ?? [];
-      const next = treeSetSession(tree, target ?? [], body.id);
-      commitTree(next);
+      const target = findEmptyLeaf(tree);
+      if (target !== null) commitTree(layoutSetSession(tree, target, body.id));
+      else commitTree(layoutAutoPlace(tree, body.id));
     } catch (e) {
       window.alert("连接失败：" + String(e instanceof Error ? e.message : e));
     } finally {
@@ -2212,10 +2188,9 @@ export function TerminalWindow() {
     const m = new Map<string, number>();
     let n = 1;
     const walk = (node: any, path: number[]) => {
-      if (node.kind === "leaf") m.set(path.join("."), n++);
+      if (node.kind === "block") m.set(path.join("."), n++);
       else {
-        walk(node.a, [...path, 0]);
-        walk(node.b, [...path, 1]);
+        node.children.forEach((c, i) => walk(c, [...path, i]));
       }
     };
     walk(tree, []);
@@ -2244,14 +2219,11 @@ export function TerminalWindow() {
       <div className="dmsWinBar" onPointerDown={startMove} onClick={onBarClick}>
         <span className="dmsWinTitle">{Icon.terminal()} SSH 终端{stateLabel !== "" ? " · " + stateLabel : ""}</span>
         <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
-          <button className="dmsWinAction" title="新会话" aria-label="新会话" onClick={() => setPicker((v) => !v)} disabled={servers.length === 0}>
-            {Icon.plus()}
+          <button className={"dmsWinAction" + (sidebarOpen ? " isOn" : "")} title="Widgets（服务器 / 未放置会话）" aria-label="Widgets" onClick={() => setSidebarOpen((v) => !v)}>
+            {Icon.list()}
           </button>
           <button className="dmsWinAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
             {Icon.gear()}
-          </button>
-          <button className={"dmsWinAction" + (listOpen ? " isOn" : "")} title="会话清单" aria-label="会话清单" onClick={() => setListOpen((v) => !v)}>
-            {Icon.list()}
           </button>
           <button className="dmsWinAction" title={"终端主题：" + OVERRIDE_LABEL[override]} aria-label="终端主题" onClick={cycleOverride}>
             {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
@@ -2374,7 +2346,7 @@ export function TerminalWindow() {
           onStatus={(tabId, patch) => setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))}
           onEmptyClick={(path) => {
             setActivePath(path);
-            setListOpen(true);
+            setSidebarOpen(true);
           }}
           numberByPath={numberByPath}
           blockSize={{ w: size.w, h: size.h }}
@@ -2383,17 +2355,19 @@ export function TerminalWindow() {
           onMagnify={toggleMagnify}
           isMagnified={magnifiedPath !== null}
         />
-        {listOpen && (
-          <SessionListPanel
-            collection={collection}
-            tabs={tabs}
-            onPlace={(id) => placeInto(id)}
-            onClose={() => setListOpen(false)}
-            onKill={(id) => killSession(id)}
-          />
-        )}
         {picker && (
           <ServerPicker servers={servers} busy={busy} onPick={connectTo} onManage={() => setDrawer(true)} onClose={() => setPicker(false)} />
+        )}
+        {sidebarOpen && (
+          <RightSidebar
+            servers={servers}
+            tabs={tabs}
+            collection={collection}
+            onStart={(s) => connectTo(s)}
+            onPlace={(id) => placeInto(id)}
+            onKill={(id) => killSession(id)}
+            onClose={() => setSidebarOpen(false)}
+          />
         )}
       </div>
       {drawer && (
@@ -2417,12 +2391,11 @@ function findEmptyLeaf(tree: any): number[] | null {
   let found: number[] | null = null;
   const walk = (node: any, path: number[]) => {
     if (found !== null) return;
-    if (node.kind === "leaf") {
+    if (node.kind === "block") {
       if (node.sessionId === null) found = [...path];
       return;
     }
-    walk(node.a, [...path, 0]);
-    walk(node.b, [...path, 1]);
+    node.children.forEach((c, i) => walk(c, [...path, i]));
   };
   walk(tree, []);
   return found;

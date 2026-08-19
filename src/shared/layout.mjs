@@ -322,3 +322,6 @@ export function leafCount(tree) {
   walk(tree);
   return n;
 }
+
+/** Alias for replaceAt — used by the magnified-view write-back. */
+export const layoutReplaceAt = replaceAt;
