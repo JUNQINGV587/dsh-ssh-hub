@@ -32,33 +32,29 @@ _Avoid_: DTO, public server
 One live SSH connection plus its shell channel, attached to a Server. Lives on the host independently of any UI surface — UI surfaces attach and detach freely without affecting it, and the host reclaims it only after an idle timeout. Global: shared across all conversations, not owned by any one of them.
 _Avoid_: tab (a UI grouping of sessions), connection
 
-**Dock**:
-The terminal workbench docked at the bottom of the conversation view, sitting in the layout flow above the composer — it pushes conversation content up rather than covering it. Rendered per conversation, but every Dock attaches to the same global Terminal Sessions and the same global Grid state. Holds the tab strip and at most a two-way split.
-_Avoid_: panel, bottom panel (the old fixed-position overlay it replaces)
+**Terminal Window**:
+The single floating window over the entire GUI that hosts the terminal surface (registered in `shell.overlay`, root scope). Draggable (viewport-clamped), resizable, double-click to maximize into the full frame — windowed and maximized are two viewports over the same Workspace. Opening uses a scale+fade animation; when the window loses focus only the frame dims, terminal content stays readable. Closed windows never affect sessions.
+_Avoid_: panel, dock, drawer, bottom panel
 
-**Focus View**:
-A frame-wide surface that covers the entire GUI for focused terminal work. Isolated from the conversation — no chat access inside it. Exactly one global instance. Hosts the full Grid; entered and exited via shortcut (Ctrl+Shift+`), the Dock toolbar button, or the Sidebar Entry — a small button at the sidebar foot (`sidebar.footer.action` seat) that opens the Focus View.
-_Avoid_: fullscreen page, route, window
+**Workspace**:
+The global split tree plus the set of Terminal Sessions. Exactly one workspace; the Terminal Window and its maximized state are viewports over it. Sessions not placed in the tree live in the unplaced list. The host owns the workspace state (served at `/ssh-hub/tree`, pushed over `/tree/events`).
+_Avoid_: layout, window state (too loose)
 
-**Grid**:
-The arrangement of Tiles showing multiple Terminal Sessions at once. Full Grid (up to four Tiles) lives in the Focus View; the Dock supports at most two Tiles.
-_Avoid_: split view, layout (too loose)
+**Block**:
+One pane of the Workspace holding exactly one Terminal Session (or an empty slot). Blocks are arranged by recursive binary splits; a block can be split in four directions, its divider dragged, and its session dragged onto another block to swap (centre) or open a new pane (edge, RGB-coded direction preview).
+_Avoid_: pane, tile, split, cell
 
-**Tile**:
-One cell of the Grid, the container for exactly one Terminal Session.
-_Avoid_: pane, split
+**Split Tree**:
+The recursive binary tree of Blocks: a Leaf holds one session (or is empty), a Split has a direction (`h` left/right, `v` top/bottom) and a draggable ratio. The wire schema for `/ssh-hub/tree`.
+_Avoid_: grid, layout template, tiling
 
-**Layout Template**:
-A preset arrangement of Tiles the user picks and then assigns Terminal Sessions to. The shipped set is: single, left-right, top-bottom, 2×2, and one-large-two-small — at most four Tiles. Arbitrary manual splitting (tmux-style) is deliberately not supported.
-_Avoid_: layout mode
+**Unplaced List**:
+Sessions not currently in the Workspace (never placed, or removed from a Block). A session returns here when its Block is removed; it keeps running until the host reclaims it (ADR-0004).
+_Avoid_: tab strip, session list (too generic)
 
-**Pin**:
-Assigning a Terminal Session to a Tile. Unpinned sessions live in the tab strip. When the viewport is too narrow to hold the current Template, excess Tiles degrade automatically: their sessions return to the tab strip without being disconnected.
-_Avoid_: stick, lock, dock (that word is taken)
-
-**Terminal Theme**:
-The color scheme of the Terminal Area, in two variants `dark` and `light`. Each variant defines foreground, background, cursor, selection, and the full 16-color ANSI palette, with every palette color meeting a minimum contrast ratio against the background.
-_Avoid_: color scheme, skin, palette (too loose — includes both variants and the contrast constraint)
+**Sidebar Entry**:
+A small button at the sidebar foot (`sidebar.footer.action` seat) that opens the Terminal Window. The only incremental sidebar seat.
+_Avoid_: launcher, dock button
 
 **Terminal Area**:
 Everything inside the terminal body of the panel: the xterm canvas, pane backgrounds, empty state, and error surface. The Terminal Area follows the Terminal Theme; the panel chrome (tab bar, toolbar, status dots, server drawer) always follows the DSH GUI theme.
