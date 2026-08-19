@@ -18,15 +18,17 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "../shared/terminal-themes.mjs";
 import {
-  pin as gridPin,
-  unpin as gridUnpin,
-  reorder as gridReorder,
-  withTemplate as gridWithTemplate,
-  fitCount,
-  gridAreas,
-  tileLetter,
-  TEMPLATES,
-} from "../shared/grid.mjs";
+  newTree,
+  split as treeSplit,
+  removeLeaf as treeRemoveLeaf,
+  setSession as treeSetSession,
+  swapSessions as treeSwapSessions,
+  setRatio as treeSetRatio,
+  canSplit,
+  collectSessions,
+  findPath,
+  normalizeTree,
+} from "../shared/splittree.mjs";
 /* Settings card + the shared bound settings scope (rc.7 settings.plugin.item).
  * getSettingsScope is imported for module-internal use (the theme chain);
  * SettingsCard/setSettingsScope are re-exported for the build.mjs wrapper. */
@@ -185,6 +187,68 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsFocusHead .dmsTabs{flex:1;min-width:0;border-bottom:none;padding:0}
 .dmsFocusExit{flex:none;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
 .dmsFocusExit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* Terminal Window (shell.overlay, ADR-0006) */
+.dmsWin{position:fixed;z-index:80;display:flex;flex-direction:column;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.35);overflow:hidden;font-family:Inter,var(--dsw-font-family)}
+.dmsWin.isMax{left:0!important;top:0!important;width:100%!important;height:100%!important;border-radius:0;border:none}
+.dmsWin.isBlur .dmsWinBar,.dmsWin.isBlur .dmsWinTool{opacity:.55}
+.dmsWin.isBlur .dmsWinBody{box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2)}
+.dmsWin.isOpening{animation:dmsWinIn .15s ease-out}
+@keyframes dmsWinIn{from{transform:scale(.95);opacity:.4}to{transform:none;opacity:1}}
+.dmsWinBar{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip);cursor:move;user-select:none;-webkit-user-select:none}
+.dmsWinTitle{flex:1;min-width:0;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmsWinActions{flex:none;display:flex;gap:2px}
+.dmsWinAction{width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;display:grid;place-items:center;padding:0}
+.dmsWinAction:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsWinTool{flex:none;display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip)}
+.dmsWinBody{flex:1;min-height:0;position:relative;background:var(--dmst-bg,#1e2128)}
+.dmsWinResize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:9}
+.dmsWinResize:after{content:'';position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid var(--dsw-alias-label-tertiary);border-bottom:2px solid var(--dsw-alias-label-tertiary);border-radius:1px;opacity:.6}
+
+/* Split tree */
+.dmsSplit{position:relative;display:flex;min-width:0;min-height:0;height:100%}
+.dmsSplit.isH{flex-direction:row}
+.dmsSplit.isV{flex-direction:column}
+.dmsSplitPane{min-width:0;min-height:0;display:flex;position:relative}
+.dmsDivider{position:absolute;z-index:5;background:transparent}
+.dmsDivider.isV{width:6px;top:0;bottom:0;cursor:col-resize;transform:translateX(-50%)}
+.dmsDivider.isH{height:6px;left:0;right:0;cursor:row-resize;transform:translateY(-50%)}
+.dmsDivider:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsBlock{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--dmst-bg,#1e2128);border:1px solid transparent}
+.dmsBlock.isActive{border-color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
+.dmsBlock.isSwapTarget{border-color:#fff}
+.dmsBlock.isDrop-left{border-left:3px solid #e5484d}
+.dmsBlock.isDrop-right{border-right:3px solid #2ee62e}
+.dmsBlock.isDrop-top{border-top:3px solid #4cc2ff}
+.dmsBlock.isDrop-bottom{border-bottom:3px solid #4c8dff}
+.dmsBlockBar{flex:none;height:26px;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dms-specific-tip,var(--dsw-specific-tip));font-size:11.5px;color:var(--dsw-alias-label-secondary);user-select:none;-webkit-user-select:none}
+.dmsBlockNum{flex:none;min-width:16px;height:16px;display:grid;place-items:center;border-radius:5px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:600}
+.dmsBlockLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmsBlockActions{flex:none;display:none;align-items:center;gap:1px}
+.dmsBlock:hover .dmsBlockActions{display:flex}
+.dmsSplitBtn,.dmsBlockRemove{width:20px;height:20px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;font-size:11px}
+.dmsSplitBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsSplitBtn-left:hover{color:#e5484d}
+.dmsSplitBtn-right:hover{color:#2ee62e}
+.dmsSplitBtn-top:hover{color:#4cc2ff}
+.dmsSplitBtn-bottom:hover{color:#4c8dff}
+.dmsBlockRemove:hover{background:rgba(231,72,86,.2);color:#ff8b93}
+.dmsBlockEmpty{position:absolute;inset:26px 0 0;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12.5px;cursor:pointer;background:transparent;border:none;width:100%}
+.dmsBlockEmpty:hover{color:var(--dmst-picker-item-fg,#e6e8ee)}
+
+/* Session list panel */
+.dmsListPanel{position:absolute;right:8px;bottom:8px;top:8px;width:260px;z-index:8;display:flex;flex-direction:column;background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.5);overflow:hidden}
+.dmsListHead{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dmsListClose{margin-left:auto;width:24px;height:24px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:6px;cursor:pointer;display:grid;place-items:center;padding:0}
+.dmsListClose:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsListBody{flex:1;min-height:0;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:4px}
+.dmsListEmpty{padding:16px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;text-align:center}
+.dmsListRow{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border-radius:7px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;text-align:left;cursor:pointer}
+.dmsListRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dmsListDot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--dsw-alias-label-tertiary)}
+.dmsListDot.isLive{background:#2ee62e}
+.dmsListLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmsListHint{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px}
+
 /* Sidebar foot entry (sidebar.footer.action seat) */
 .dmsSidebarEntry{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 12px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12.5px;font-weight:500;cursor:pointer;text-align:left}
 .dmsSidebarEntry:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
@@ -377,6 +441,25 @@ const Icon = {
       <path d="M5 1h4l.5 1H12v1.5H2V2h2.5L5 1zm-2.2 4h8.4l-.7 7.1a1 1 0 01-1 .9H4.5a1 1 0 01-1-.9L2.8 5z" fill="currentColor" />
     </svg>
   ),
+  list: () => (
+    <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x={1.6} y={2} width={10.8} height={1.6} rx={0.8} fill="currentColor" />
+      <rect x={1.6} y={6.2} width={10.8} height={1.6} rx={0.8} fill="currentColor" />
+      <rect x={1.6} y={10.4} width={7} height={1.6} rx={0.8} fill="currentColor" />
+    </svg>
+  ),
+  maximize: () => (
+    <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x={1.5} y={1.5} width={11} height={11} rx={1.5} stroke="currentColor" strokeWidth={1.1} />
+      <path d="M4 1.5v-1M1.5 4h-1" stroke="currentColor" strokeWidth={0.01} />
+    </svg>
+  ),
+  minimize: () => (
+    <svg width={13} height={13} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x={1.5} y={1.5} width={11} height={11} rx={1.5} stroke="currentColor" strokeWidth={1.1} />
+      <path d="M5 4l5 6M5 10l5-6" stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" />
+    </svg>
+  ),
 };
 
 /* ---------------- xterm pane ---------------- */
@@ -533,250 +616,6 @@ function XtermPane({
   }, [active]);
 
   return <div className={"dmsPane" + (active ? " isActive" : "")} ref={hostRef} />;
-}
-
-/* ---------------- tab strip (shared by Dock and Focus View) ---------------- */
-
-function TabStrip({
-  tabs,
-  active,
-  grid,
-  serversCount,
-  busy,
-  stateLabel,
-  onSelect,
-  onClose,
-  onPinToggle,
-  onNew,
-}: {
-  tabs: TermTab[];
-  active: string | null;
-  grid: GridState;
-  serversCount: number;
-  busy: boolean;
-  stateLabel: string;
-  onSelect: (id: string) => void;
-  onClose: (id: string) => void;
-  onPinToggle: (id: string) => void;
-  onNew: () => void;
-}) {
-  const pinnedIndex = (id: string) => grid.tiles.indexOf(id);
-  const dotClass = (s: TabStatus) =>
-    "dmsTabDot" + (s === "connecting" ? " isConnecting" : s === "live" ? " isLive" : " isClosed");
-  return (
-    <div className="dmsTabs">
-      <span className="dmsTabsLead" aria-hidden>
-        {Icon.terminal()}
-      </span>
-      <div className="dmsTabsScroll" role="tablist">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={t.id === active}
-            className={"dmsTab" + (t.id === active ? " isActive" : "") + (t.status === "closed" || t.status === "error" ? " isClosed" : "")}
-            onClick={() => onSelect(t.id)}
-          >
-            <span className={dotClass(t.status)} />
-            <span className="dmsTabLabel">{t.label}</span>
-            <span
-              className={"dmsTabPin" + (pinnedIndex(t.id) >= 0 ? " isPinned" : "")}
-              role="button"
-              title={pinnedIndex(t.id) >= 0 ? "从网格移回标签栏" : "钉入网格（同屏显示）"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onPinToggle(t.id);
-              }}
-            >
-              {PinIcon()}
-            </span>
-            <span
-              className="dmsTabClose"
-              role="button"
-              title={"关闭 " + t.label}
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose(t.id);
-              }}
-            >
-              {Icon.close()}
-            </span>
-          </button>
-        ))}
-      </div>
-      <button
-        className="dmsTab dmsTabNew"
-        style={{ border: "none", padding: "0 8px", maxWidth: "none" }}
-        title="连接服务器"
-        aria-label="连接服务器"
-        disabled={busy || serversCount === 0}
-        onClick={onNew}
-      >
-        {Icon.plus()}
-      </button>
-      <span className="dmsTabsState" title={stateLabel}>
-        {stateLabel}
-      </span>
-    </div>
-  );
-}
-
-/* ---------------- grid body ---------------- */
-
-/** The global GridState (ADR-0005): one Layout Template, one pin per Tile. */
-interface GridState {
-  template: string;
-  tiles: (string | null)[];
-}
-
-const TEMPLATE_LABEL: Record<string, string> = {
-  single: "单格",
-  "split-h": "左右",
-  "split-v": "上下",
-  "grid-4": "2×2",
-  "main-2": "1大2小",
-};
-
-function PinIcon() {
-  return (
-    <svg width={11} height={11} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M8.9 1.1l.7.7-4.2 4.2.7.7 4.2-4.2.7.7-3.4 3.4 1.5 1.5 1.1-1.1 1.4 1.4-1.1 1.1 2.8 2.8-1.4 1.4-2.8-2.8-1.1 1.1L8 8.4 4.6 9.9l-1.5-1.5.7-.7-1.4-1.4-.7.7L.4 4.9 4.9.4 8.9 1.1z" fill="currentColor" />
-    </svg>
-  );
-}
-
-/**
- * The Grid: arranges pinned Terminal Sessions into Tiles per the Layout
- * Template. Shared by the Dock (cap 2 via fitCount) and the Focus View
- * (cap 4). Tiles are positional — `visCount` leading tiles render, trailing
- * ones degrade back to the tab strip. Empty Tiles offer a picker of unpinned
- * sessions; Tiles can be dragged onto each other to reorder.
- */
-function GridBody({
-  grid,
-  tabs,
-  visCount,
-  surface,
-  onStatus,
-  onUnpin,
-  onReorder,
-  onPickEmpty,
-}: {
-  grid: GridState;
-  tabs: TermTab[];
-  visCount: number;
-  surface: string;
-  onStatus: (tabId: string, patch: Partial<TermTab>) => void;
-  onUnpin: (tileIndex: number) => void;
-  onReorder: (from: number, to: number) => void;
-  onPickEmpty: (tileIndex: number, sessionId: string) => void;
-}) {
-  const [dragFrom, setDragFrom] = React.useState<number | null>(null);
-  const [dragOver, setDragOver] = React.useState<number | null>(null);
-  const [pickFor, setPickFor] = React.useState<number | null>(null);
-  const visible = Math.max(0, Math.min(visCount, grid.tiles.length));
-  const pinned = new Set(grid.tiles.filter((t): t is string => t !== null));
-  const unpinnedTabs = tabs.filter((t) => !pinned.has(t.id));
-
-  // Drag state: a press only becomes a drag after the pointer moves more
-  // than a small threshold — selecting text across Tiles must not reorder.
-  const dragStartRef = React.useRef<{ x: number; y: number; idx: number } | null>(null);
-  React.useEffect(() => {
-    const move = (e: PointerEvent) => {
-      const s = dragStartRef.current;
-      if (s === null || dragFrom !== null) return;
-      if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 4) setDragFrom(s.idx);
-    };
-    const up = () => {
-      dragStartRef.current = null;
-      setDragFrom(null);
-      setDragOver(null);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-  }, [dragFrom]);
-
-  const tileDragProps = (idx: number) => ({
-    onPointerDown: (e: React.PointerEvent) => {
-      if (e.button !== 0) return;
-      dragStartRef.current = { x: e.clientX, y: e.clientY, idx };
-    },
-    onPointerEnter: () => {
-      if (dragFrom !== null && dragFrom !== idx) setDragOver(idx);
-    },
-    onPointerUp: () => {
-      const s = dragStartRef.current;
-      if (s !== null && dragFrom !== null && dragOver !== null && dragOver !== dragFrom) {
-        onReorder(dragFrom, dragOver);
-      }
-      dragStartRef.current = null;
-      setDragFrom(null);
-      setDragOver(null);
-    },
-  });
-
-  return (
-    <div className="dmsGrid" style={{ gridTemplateAreas: gridAreas(grid.template) }}>
-      {grid.tiles.slice(0, visible).map((sessionId, idx) => {
-        const area = tileLetter(grid.template, idx);
-        const dragClass =
-          "dmsTile" +
-          (dragFrom === idx ? " isDragFrom" : "") +
-          (dragOver === idx ? " isDragTarget" : "");
-        if (sessionId === null) {
-          return (
-            <div key={"tile-empty-" + idx} className={dragClass} style={{ gridArea: area }} {...tileDragProps(idx)}>
-              <button className="dmsTileEmpty" onClick={() => setPickFor((v) => (v === idx ? null : idx))}>
-                {Icon.plus()} 放入终端
-              </button>
-              {pickFor === idx && (
-                <div className="dmsTilePick">
-                  <div className="dmsTilePickTitle">选择要放入的终端</div>
-                  {unpinnedTabs.length === 0 ? (
-                    <span style={{ padding: "6px", color: "var(--dmst-picker-label-fg,#8b90a0)", fontSize: 12 }}>
-                      没有可放入的终端，先开一个会话
-                    </span>
-                  ) : (
-                    unpinnedTabs.map((t) => (
-                      <button
-                        key={t.id}
-                        className="dmsPickerItem"
-                        onClick={() => {
-                          onPickEmpty(idx, t.id);
-                          setPickFor(null);
-                        }}
-                      >
-                        <span className="dmsPickerMeta">{Icon.terminal(13)}</span>
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        }
-        const tab = tabs.find((t) => t.id === sessionId);
-        return (
-          <div key={"tile-" + sessionId} className={dragClass} style={{ gridArea: area }} {...tileDragProps(idx)}>
-            <XtermPane
-              tab={tab ?? { id: sessionId, serverId: "", label: "…", status: "connecting" }}
-              active={true}
-              surface={surface}
-              onStatus={(patch) => onStatus(sessionId, patch)}
-            />
-            <button className="dmsTileUnpin" title="移回标签栏" aria-label="移回标签栏" onClick={() => onUnpin(idx)}>
-              {Icon.close()}
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 /* ---------------- server form ---------------- */
@@ -1257,7 +1096,341 @@ function ServerDrawer({
   );
 }
 
-/* ---------------- main panel ---------------- */
+/* ---------------- workspace tree (ADR-0006) ---------------- */
+
+/** The global workspace tree: the floating window and the full-screen view
+ *  are two viewports over the same tree (host-authoritative, pushed via
+ *  /tree/events). */
+function useTreeState(enabled: boolean) {
+  const [tree, setTree] = React.useState<any>({ kind: "leaf", sessionId: null });
+  React.useEffect(() => {
+    if (!enabled) return;
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    api("/tree")
+      .then((b) => {
+        if (!cancelled) setTree(b.tree ?? { kind: "leaf", sessionId: null });
+      })
+      .catch(() => {
+        /* older host: no tree route — keep the local default */
+      });
+    try {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(proto + "//" + location.host + PREFIX + "/tree/events");
+      ws.onmessage = (ev) => {
+        if (typeof ev.data !== "string" || cancelled) return;
+        try {
+          setTree(JSON.parse(ev.data));
+        } catch {
+          /* ignore malformed push */
+        }
+      };
+    } catch {
+      /* ws unavailable */
+    }
+    return () => {
+      cancelled = true;
+      ws?.close();
+    };
+  }, [enabled]);
+  const commitTree = React.useCallback((next: any) => {
+    setTree(next);
+    api("/tree", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
+      console.error("[dsh-ssh-hub] tree PUT failed, reverting:", e);
+      api("/tree")
+        .then((b) => setTree(b.tree ?? { kind: "leaf", sessionId: null }))
+        .catch(() => {
+          /* host unreachable; keep local state until the next push */
+        });
+    });
+  }, []);
+  return { tree, commitTree };
+}
+
+/** Frame-wide visibility of the terminal window (ADR-0006). */
+let terminalVisible = false;
+let terminalMaximized = false;
+const terminalListeners = new Set<() => void>();
+export function setTerminalVisible(v: boolean) {
+  const next = Boolean(v);
+  if (next === terminalVisible) return;
+  terminalVisible = next;
+  if (next && terminalMaximized) terminalMaximized = false; // reopen windowed
+  for (const l of [...terminalListeners]) l();
+}
+export function getTerminalVisible() {
+  return terminalVisible;
+}
+export function setTerminalMaximized(v: boolean) {
+  const next = Boolean(v);
+  if (next === terminalMaximized) return;
+  terminalMaximized = next;
+  for (const l of [...terminalListeners]) l();
+}
+export function getTerminalMaximized() {
+  return terminalMaximized;
+}
+function subscribeTerminal(listener: () => void) {
+  terminalListeners.add(listener);
+  return () => {
+    terminalListeners.delete(listener);
+  };
+}
+
+/** Reduce-motion check (opening/closing animation and drags respect it). */
+function prefersReducedMotion() {
+  return typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/* ---------------- split tree view ---------------- */
+
+const SPLIT_DIR_LABEL: Record<string, { title: string; cls: string }> = {
+  left: { title: "左边分割", cls: "dmsSplitBtn-left" },
+  right: { title: "右边分割", cls: "dmsSplitBtn-right" },
+  top: { title: "上边分割", cls: "dmsSplitBtn-top" },
+  bottom: { title: "下边分割", cls: "dmsSplitBtn-bottom" },
+};
+
+/**
+ * Recursive renderer for the workspace tree. A Leaf renders a Block (a
+ * Terminal Session or an empty slot); a Split renders a flex row/column with
+ * a draggable divider. Blocks carry a slim title bar: block number, session
+ * label, four split buttons, and a remove button (session returns to the
+ * unplaced list, the block stays). Blocks drag: onto another block's centre
+ * swaps the two sessions, onto its edges opens a new pane in that direction
+ * (RGB-coded preview: red=left, green=right, cyan=top, blue=bottom).
+ */
+function SplitTreeView({
+  node,
+  path,
+  tree,
+  commitTree,
+  tabs,
+  activePath,
+  onFocusBlock,
+  onStatus,
+  onEmptyClick,
+  numberByPath,
+  blockSize,
+}: {
+  node: any;
+  path: number[];
+  tree: any;
+  commitTree: (next: any) => void;
+  tabs: TermTab[];
+  activePath: number[] | null;
+  onFocusBlock: (path: number[]) => void;
+  onStatus: (tabId: string, patch: Partial<TermTab>) => void;
+  onEmptyClick: (path: number[]) => void;
+  numberByPath: Map<string, number>;
+  blockSize: { w: number; h: number };
+}) {
+  if (node.kind === "leaf") {
+    return (
+      <BlockView
+        path={path}
+        sessionId={node.sessionId}
+        tree={tree}
+        commitTree={commitTree}
+        tabs={tabs}
+        active={activePath !== null && samePath(activePath, path)}
+        onFocus={() => onFocusBlock(path)}
+        onStatus={onStatus}
+        onEmptyClick={onEmptyClick}
+        number={numberByPath.get(path.join(".")) ?? 0}
+        size={blockSize}
+      />
+    );
+  }
+  const isH = node.dir === "h";
+  return (
+    <div className={"dmsSplit" + (isH ? " isH" : " isV")}>
+      <div className="dmsSplitPane" style={{ flex: isH ? `\${node.ratio * 100}% 1 0` : `1 1 \${node.ratio * 100}%` }}>
+        <SplitTreeView
+          node={node.a}
+          path={[...path, 0]}
+          tree={tree}
+          commitTree={commitTree}
+          tabs={tabs}
+          activePath={activePath}
+          onFocusBlock={onFocusBlock}
+          onStatus={onStatus}
+          onEmptyClick={onEmptyClick}
+          numberByPath={numberByPath}
+          blockSize={isH ? { w: blockSize.w * node.ratio, h: blockSize.h } : { w: blockSize.w, h: blockSize.h * node.ratio }}
+        />
+      </div>
+      <Divider path={path} dir={node.dir} tree={tree} commitTree={commitTree} container={blockSize} />
+      <div className="dmsSplitPane" style={{ flex: isH ? `\${(1 - node.ratio) * 100}% 1 0` : `1 1 \${(1 - node.ratio) * 100}%` }}>
+        <SplitTreeView
+          node={node.b}
+          path={[...path, 1]}
+          tree={tree}
+          commitTree={commitTree}
+          tabs={tabs}
+          activePath={activePath}
+          onFocusBlock={onFocusBlock}
+          onStatus={onStatus}
+          onEmptyClick={onEmptyClick}
+          numberByPath={numberByPath}
+          blockSize={isH ? { w: blockSize.w * (1 - node.ratio), h: blockSize.h } : { w: blockSize.w, h: blockSize.h * (1 - node.ratio) }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function samePath(a: number[], b: number[]) {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/** A draggable divider between two split panes; ratio updates on drop. */
+function Divider({
+  path,
+  dir,
+  tree,
+  commitTree,
+  container,
+}: {
+  path: number[];
+  dir: "h" | "v";
+  tree: any;
+  commitTree: (next: any) => void;
+  container: { w: number; h: number };
+}) {
+  const dragRef = React.useRef<{ x: number; y: number; ratio: number } | null>(null);
+  const [overriding, setOverriding] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    if (dragRef.current === null) return;
+    const move = (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (d === null) return;
+      const delta = dir === "h" ? (e.clientX - d.x) / container.w : (e.clientY - d.y) / container.h;
+      const ratio = Math.min(0.85, Math.max(0.15, d.ratio + delta));
+      setOverriding(ratio);
+    };
+    const up = () => {
+      if (dragRef.current !== null && overriding !== null) {
+        commitTree(treeSetRatio(tree, path, overriding));
+      }
+      dragRef.current = null;
+      setOverriding(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [dir, container.w, container.h, tree, path, commitTree, overriding]);
+
+  const node = nodeAtPath(tree, path);
+  const shown = overriding ?? (node?.kind === "split" ? node.ratio : 0.5);
+  return (
+    <div
+      className={"dmsDivider" + (dir === "h" ? " isV" : " isH")}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        dragRef.current = { x: e.clientX, y: e.clientY, ratio: shown };
+      }}
+      style={dir === "h" ? { left: `calc(\${shown * 100}% - 3px)` } : { top: `calc(\${shown * 100}% - 3px)` }}
+    />
+  );
+}
+
+function nodeAtPath(tree: any, path: number[]): any {
+  let node = tree;
+  for (const step of path) {
+    if (node.kind !== "split") return undefined;
+    node = step === 0 ? node.a : node.b;
+  }
+  return node;
+}
+
+/** One block: a slim title bar over the terminal (or an empty slot). */
+function BlockView({
+  path,
+  sessionId,
+  tree,
+  commitTree,
+  tabs,
+  active,
+  onFocus,
+  onStatus,
+  onEmptyClick,
+  number,
+  size,
+}: {
+  path: number[];
+  sessionId: string | null;
+  tree: any;
+  commitTree: (next: any) => void;
+  tabs: TermTab[];
+  active: boolean;
+  onFocus: () => void;
+  onStatus: (tabId: string, patch: Partial<TermTab>) => void;
+  onEmptyClick: (path: number[]) => void;
+  number: number;
+  size: { w: number; h: number };
+}) {
+  const tab = sessionId !== null ? tabs.find((t) => t.id === sessionId) : undefined;
+  const [hover, setHover] = React.useState<"swap" | "left" | "right" | "top" | "bottom" | null>(null);
+
+  const splitBtn = (dir: "left" | "right" | "top" | "bottom") => {
+    const d = dir === "left" || dir === "right" ? "h" : "v";
+    const newFirst = dir === "left" || dir === "top";
+    const next = treeSplit(tree, path, d, null, newFirst);
+    commitTree(next);
+  };
+  const remove = () => {
+    // Remove the block (its session, if any, returns to the unplaced list).
+    const [next] = treeRemoveLeaf(tree, path);
+    commitTree(next ?? newTree(null));
+  };
+
+  const dragClass = "dmsBlock" + (active ? " isActive" : "") + (hover === "swap" ? " isSwapTarget" : "") + (hover !== null && hover !== "swap" ? " isDrop-" + hover : "");
+  return (
+    <div
+      className={dragClass}
+      onClick={onFocus}
+    >
+      <div className="dmsBlockBar" title={sessionId !== null ? tab?.label ?? sessionId : "空块（点击放入会话）"}>
+        <span className="dmsBlockNum">{number}</span>
+        <span className="dmsBlockLabel">{sessionId !== null ? tab?.label ?? sessionId : "点击放入会话"}</span>
+        <span className="dmsBlockActions">
+          {(Object.keys(SPLIT_DIR_LABEL) as Array<"left" | "right" | "top" | "bottom">).map((d) => (
+            <button
+              key={d}
+              className={"dmsSplitBtn " + SPLIT_DIR_LABEL[d].cls}
+              title={SPLIT_DIR_LABEL[d].title}
+              aria-label={SPLIT_DIR_LABEL[d].title}
+              onClick={(e) => {
+                e.stopPropagation();
+                splitBtn(d);
+              }}
+            >
+              {d === "left" ? "←" : d === "right" ? "→" : d === "top" ? "↑" : "↓"}
+            </button>
+          ))}
+          <button className="dmsBlockRemove" title="移除（会话回到未放置清单）" aria-label="移除" onClick={(e) => { e.stopPropagation(); remove(); }}>
+            {Icon.close()}
+          </button>
+        </span>
+      </div>
+      {sessionId === null ? (
+        <button className="dmsBlockEmpty" onClick={() => onEmptyClick(path)}>
+          {Icon.plus()} 放入会话
+        </button>
+      ) : (
+        <XtermPane tab={tab ?? { id: sessionId, serverId: "", label: "…", status: "connecting" }} active={true} surface="window" onStatus={(patch) => onStatus(sessionId, patch)} />
+      )}
+    </div>
+  );
+}
+
+/* ---------------- server form ---------------- */
 
 /* ---------------- shared hooks (Dock + Focus View) ---------------- */
 
@@ -1333,523 +1506,129 @@ function useTerminalTheme() {
  * itself). `enabled` gates the subscription (the Focus View subscribes only
  * while visible).
  */
-function useGridState(enabled: boolean) {
-  const [grid, setGrid] = React.useState<GridState>({ template: "single", tiles: [null] });
-  React.useEffect(() => {
-    if (!enabled) return;
-    let ws: WebSocket | null = null;
-    let cancelled = false;
-    api("/grid")
-      .then((b) => {
-        if (!cancelled) setGrid(b.grid ?? { template: "single", tiles: [null] });
-      })
-      .catch(() => {
-        /* older host: no grid route — keep the local default */
-      });
-    try {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(proto + "//" + location.host + PREFIX + "/grid/events");
-      ws.onmessage = (ev) => {
-        if (typeof ev.data !== "string" || cancelled) return;
-        try {
-          setGrid(JSON.parse(ev.data));
-        } catch {
-          /* ignore malformed push */
-        }
-      };
-    } catch {
-      /* ws unavailable */
+
+
+
+/* ---------------- terminal window (frame-wide surface) ---------------- */
+
+const WIN_KEY = "dsh-ssh-hub.win";
+function loadWin() {
+  try {
+    const v = JSON.parse(localStorage.getItem(WIN_KEY) ?? "");
+    if (typeof v.x === "number" && typeof v.y === "number" && typeof v.w === "number" && typeof v.h === "number") {
+      return v;
     }
-    return () => {
-      cancelled = true;
-      ws?.close();
-    };
-  }, [enabled]);
-  const commitGrid = React.useCallback((next: GridState) => {
-    setGrid(next);
-    api("/grid", { method: "PUT", body: JSON.stringify(next) }).catch((e) => {
-      console.error("[dsh-ssh-hub] grid PUT failed, reverting:", e);
-      api("/grid")
-        .then((b) => setGrid(b.grid ?? { template: "single", tiles: [null] }))
-        .catch(() => {
-          /* host unreachable; keep local state until the next push */
-        });
-    });
-  }, []);
-  return { grid, commitGrid };
+  } catch {
+    /* ignore */
+  }
+  return {
+    x: Math.max(0, Math.round((window.innerWidth - 780) / 2)),
+    y: Math.max(0, Math.round((window.innerHeight - 480) / 2)),
+    w: Math.min(780, window.innerWidth - 24),
+    h: Math.min(480, window.innerHeight - 24),
+  };
+}
+function saveWin(v: { x: number; y: number; w: number; h: number }) {
+  try {
+    localStorage.setItem(WIN_KEY, JSON.stringify(v));
+  } catch {
+    /* ignore */
+  }
 }
 
-export function TerminalPanel(_props?: { sessionId?: string }) {
-  const [open, setOpen] = React.useState(false);
-  const [tabs, setTabs] = React.useState<TermTab[]>([]);
-  const [active, setActive] = React.useState<string | null>(null);
-  const [servers, setServers] = React.useState<ServerView[]>([]);
-  const [drawer, setDrawer] = React.useState(false);
-  const [picker, setPicker] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [loading, setLoading] = React.useState(true);
-  const heightRef = React.useRef<number>(
-    (() => {
-      try {
-        const v = Number(localStorage.getItem(HEIGHT_KEY));
-        if (Number.isFinite(v) && v >= MIN_HEIGHT) return v;
-      } catch {
-        /* ignore */
-      }
-      return Math.round(window.innerHeight * 0.36);
-    })(),
-  );
-  const [height, setHeight] = React.useState(heightRef.current);
-  const bodyRef = React.useRef<HTMLDivElement>(null);
-
-  /* ---- global Grid state (ADR-0005) ---- */
-  const { grid, commitGrid } = useGridState(true);
-
-  // Measure the Terminal Area so fitCount can decide how many Tiles fit here
-  // (the Dock caps at two; the Focus View passes its own cap).
-  const [gridSize, setGridSize] = React.useState({ w: 0, h: 0 });
-  React.useEffect(() => {
-    const el = bodyRef.current;
-    if (el === null) return;
-    const measure = () => setGridSize({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [open]);
-  const visCount = gridSize.w > 0 ? fitCount(grid.template, gridSize.w, gridSize.h, 2) : 0;
-  /** Dock template cycle: only the two-way splits are offered here. */
-  const DOCK_TEMPLATES = ["single", "split-h", "split-v"];
-  const cycleTemplate = () => {
-    const cur = grid.template;
-    const idx = DOCK_TEMPLATES.indexOf(cur);
-    const next = DOCK_TEMPLATES[(idx + 1) % DOCK_TEMPLATES.length];
-    commitGrid(gridWithTemplate(grid, next));
-  };
-
-  // Resolved Terminal Theme + surface variables (shared hook).
-  const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
-
-  const refreshServers = React.useCallback(async () => {
-    try {
-      const body = await api("/servers");
-      setServers(body.servers ?? []);
-    } catch (e) {
-      console.error("[dsh-ssh-hub] load servers failed:", e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  /** Server Defaults power the form placeholders; refresh whenever they change. */
-  const [defaults, setDefaults] = React.useState<ServerDefaults | null>(null);
-  const refreshDefaults = React.useCallback(async () => {
-    try {
-      const body = await api("/defaults");
-      setDefaults(body as ServerDefaults);
-    } catch {
-      /* route unavailable on older hosts — placeholders fall back to static copy */
-    }
-  }, []);
-
-  React.useEffect(() => {
-    refreshServers();
-    refreshDefaults();
-  }, [refreshServers, refreshDefaults]);
-
-  // Rebuild the tab list from the host on mount. Terminal Sessions are
-  // host-owned (ADR-0004): any surface (this panel, another conversation's
-  // panel, the Focus View) attaches and detaches freely, so tab state is a
-  // projection of the live session list, not per-conversation local state.
-  // This is what makes "collapse / refresh / switch conversation" reconnect
-  // to the same running shells with their scrollback replayed.
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const body = await api("/sessions");
-        if (cancelled) return;
-        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
-          body.sessions ?? [];
-        setTabs(
-          remote.map((s) => ({
-            id: s.id,
-            serverId: s.serverId,
-            label: s.serverName || s.label,
-            status: s.exited ? "closed" : "connecting",
-          })),
-        );
-        if (remote.length > 0) setActive(remote[0].id);
-        let prevOpen = false;
-        try {
-          prevOpen = localStorage.getItem("dsh-ssh-hub.open") === "1";
-        } catch {
-          /* ignore */
-        }
-        if (remote.length > 0 || prevOpen) setOpen(true);
-      } catch (e) {
-        console.error("[dsh-ssh-hub] load sessions failed:", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.code === "Backquote") {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // 「管理服务器」 entry from the settings card: open the panel and the drawer.
-  React.useEffect(() => {
-    const onOpenServers = () => {
-      setOpen(true);
-      setDrawer(true);
-    };
-    window.addEventListener("dsh-ssh-hub:open-servers", onOpenServers);
-    return () => window.removeEventListener("dsh-ssh-hub:open-servers", onOpenServers);
-  }, []);
-
-  React.useEffect(() => {
-    try {
-      localStorage.setItem("dsh-ssh-hub.open", open ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [open]);
-
-  const connectTo = async (s: ServerView) => {
-    setBusy(true);
-    setPicker(false);
-    try {
-      const body = await api("/sessions", {
-        method: "POST",
-        body: JSON.stringify({ serverId: s.id, cols: 80, rows: 24 }),
-      });
-      const tab: TermTab = {
-        id: body.id,
-        serverId: s.id,
-        label: s.name || `${s.username}@${s.host}`,
-        status: "connecting",
-      };
-      setTabs((prev) => [...prev, tab]);
-      setActive(body.id);
-      setOpen(true);
-    } catch (e) {
-      window.alert("连接失败：" + String(e instanceof Error ? e.message : e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const closeTab = async (id: string) => {
-    // Optimistic removal, then reconcile with the host: if the close request
-    // failed the session is still alive and must reappear (visible feedback,
-    // not a silent lie); if it 404'd (already reaped) it stays gone.
-    setTabs((prev) => {
-      const idx = prev.findIndex((t) => t.id === id);
-      const next = prev.filter((t) => t.id !== id);
-      if (idx !== -1) {
-        setActive((a) => (a === id ? (next[Math.min(idx, next.length - 1)]?.id ?? null) : a));
-      }
-      return next;
-    });
-    try {
-      await api("/sessions/" + id, { method: "DELETE" });
-    } catch (e) {
-      console.error("[dsh-ssh-hub] close failed, reconciling:", e);
-      try {
-        const body = await api("/sessions");
-        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
-          body.sessions ?? [];
-        setTabs(
-          remote.map((s) => ({
-            id: s.id,
-            serverId: s.serverId,
-            label: s.serverName || s.label,
-            status: s.exited ? "closed" : "connecting",
-          })),
-        );
-      } catch {
-        /* host unreachable; the session will reappear on the next rebuild */
-      }
-    }
-  };
-
-  const startDrag = (e: React.PointerEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = heightRef.current;
-    const maxH = Math.round(window.innerHeight * 0.78);
-    const move = (ev: PointerEvent) => {
-      const h = Math.min(maxH, Math.max(MIN_HEIGHT, startH + (startY - ev.clientY)));
-      heightRef.current = h;
-      setHeight(h);
-    };
-    const up = () => {
-      document.body.classList.remove("dmsResizing");
-      document.removeEventListener("pointermove", move);
-      document.removeEventListener("pointerup", up);
-      try {
-        localStorage.setItem(HEIGHT_KEY, String(heightRef.current));
-      } catch {
-        /* ignore */
-      }
-    };
-    document.body.classList.add("dmsResizing");
-    document.addEventListener("pointermove", move);
-    document.addEventListener("pointerup", up);
-  };
-
-  const activeTab = tabs.find((t) => t.id === active) ?? null;
-
-  /* ---- Grid mutations (optimistic + PUT, broadcast converges) ---- */
-  const pinTab = (id: string) => {
-    const free = grid.tiles.indexOf(null);
-    if (free === -1) return false;
-    commitGrid(gridPin(grid, id, free));
-    setActive(id);
-    return true;
-  };
-  const unpinTile = (idx: number) => commitGrid(gridUnpin(grid, idx));
-  const reorderTiles = (from: number, to: number) => commitGrid(gridReorder(grid, from, to));
-  const pickEmpty = (idx: number, sessionId: string) => {
-    commitGrid(gridPin(grid, sessionId, idx));
-    setActive(sessionId);
-  };
-  const pinnedIndex = (id: string) => grid.tiles.indexOf(id);
-
-  const stateLabel =
-    tabs.length === 0
-      ? loading
-        ? "加载中…"
-        : servers.length === 0
-          ? "未配置服务器"
-          : "就绪"
-      : activeTab === null
-        ? "空闲"
-        : activeTab.status === "connecting"
-          ? "连接中…"
-          : activeTab.status === "live"
-            ? activeTab.label
-            : activeTab.status === "error"
-              ? "连接失败"
-              : "已断开";
-
-
+/** The unplaced-session list: sessions not currently in the tree. */
+function SessionListPanel({
+  tree,
+  tabs,
+  onPlace,
+  onClose,
+}: {
+  tree: any;
+  tabs: TermTab[];
+  onPlace: (sessionId: string) => void;
+  onClose: () => void;
+}) {
+  const inTree = new Set(collectSessions(tree));
+  const unplaced = tabs.filter((t) => !inTree.has(t.id));
   return (
-    <div className="dmsRoot">
-      {open ? (
-        <div className="dmsPanel" id="dmsPanel" style={{ height: height + "px" }}>
-          <div className="dmsResize" title="拖拽调整高度" onPointerDown={startDrag} />
-          <div className="dmsTabs">
-            <TabStrip
-              tabs={tabs}
-              active={active}
-              grid={grid}
-              serversCount={servers.length}
-              busy={busy}
-              stateLabel={stateLabel}
-              onSelect={(id) => {
-                setActive(id);
-                // Clicking an unpinned tab shows it (story 6: tab strip keeps
-                // its behavior): pin into the first free Tile, or replace the
-                // last one when the Grid is full.
-                if (pinnedIndex(id) === -1) {
-                  const free = grid.tiles.indexOf(null);
-                  const target = free !== -1 ? free : grid.tiles.length - 1;
-                  commitGrid(gridPin(grid, id, target));
-                }
-              }}
-              onClose={closeTab}
-              onPinToggle={(id) => {
-                const idx = pinnedIndex(id);
-                if (idx >= 0) unpinTile(idx);
-                else pinTab(id);
-              }}
-              onNew={() => setPicker((v) => !v)}
-            />
-            <button className="dmsBarAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
-              {Icon.gear()}
+    <div className="dmsListPanel">
+      <div className="dmsListHead">
+        <span>会话清单</span>
+        <button className="dmsListClose" onClick={onClose} aria-label="关闭清单">
+          {Icon.close()}
+        </button>
+      </div>
+      <div className="dmsListBody">
+        {unplaced.length === 0 ? (
+          <div className="dmsListEmpty">没有未放置的会话（所有会话都在窗口中）</div>
+        ) : (
+          unplaced.map((t) => (
+            <button key={t.id} className="dmsListRow" onClick={() => onPlace(t.id)}>
+              <span className={t.status === "live" ? "dmsListDot isLive" : "dmsListDot"} />
+              <span className="dmsListLabel">{t.label}</span>
+              <span className="dmsListHint">点击放入</span>
             </button>
-            <button className="dmsBarAction" title="收起面板（Ctrl+`）" aria-label="收起面板" onClick={() => setOpen(false)}>
-              {Icon.chevronDown()}
-            </button>
-          </div>
-          <div className="dmsTool">
-            <button className="dmsToolBtn" disabled={servers.length === 0 || busy} onClick={() => setPicker((v) => !v)}>
-              {Icon.plus()} 新会话
-            </button>
-            <button className="dmsToolBtn" onClick={() => setDrawer(true)}>
-              {Icon.gear()} 管理服务器（{servers.length}）
-            </button>
-            <button
-              className="dmsToolBtn"
-              title="布局模板（点击切换：单格 / 左右 / 上下）"
-              aria-label="布局模板（点击切换）"
-              onClick={cycleTemplate}
-            >
-              布局:{TEMPLATE_LABEL[grid.template] ?? grid.template}
-            </button>
-            <button
-              className="dmsToolBtn"
-              title="专注视图（Ctrl+Shift+`，Esc 返回）"
-              aria-label="专注视图"
-              onClick={() => setFocusVisible(true)}
-            >
-              {Icon.terminal()} 专注视图
-            </button>
-            <button
-              className="dmsToolBtn"
-              style={{ marginLeft: "auto" }}
-              title={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
-              aria-label={"终端主题：" + OVERRIDE_LABEL[override] + "（点击切换）"}
-              onClick={cycleOverride}
-            >
-              {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
-              {OVERRIDE_LABEL[override]}
-            </button>
-            <span className="dmsHint" style={{ marginLeft: 4 }}>
-              {servers.length === 0 ? "先添加一台服务器，才能连接" : "双击服务器行或点「新会话」开始"}{" "}
-              {tabs.length > 0 ? "· 关闭最后一个终端标签会自动断开" : ""}
-            </span>
-          </div>
-          <div className="dmsBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
-            {tabs.length === 0 ? (
-              <div className="dmsEmpty">
-                <span>{servers.length === 0 ? "还没有服务器，先添加一台" : "选择一台服务器开始连接"}</span>
-                {servers.length > 0 ? (
-                  <button className="dmsEmptyBtn" onClick={() => setPicker(true)}>
-                    {Icon.plus()} 连接服务器
-                  </button>
-                ) : (
-                  <button className="dmsEmptyBtn" onClick={() => setDrawer(true)}>
-                    {Icon.plus()} 添加服务器
-                  </button>
-                )}
-              </div>
-            ) : visCount === 0 ? (
-              <div className="dmsDegrade">
-                窗口太小，已钉的终端收回到标签栏。展开面板或进入专注视图可获得完整分屏。
-              </div>
-            ) : (
-              <GridBody
-                grid={grid}
-                tabs={tabs}
-                visCount={visCount}
-                surface="dock"
-                onStatus={(tabId, patch) =>
-                  setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))
-                }
-                onUnpin={unpinTile}
-                onReorder={reorderTiles}
-                onPickEmpty={pickEmpty}
-              />
-            )}
-            {picker && (
-              <ServerPicker servers={servers} busy={busy} onPick={connectTo} onManage={() => setDrawer(true)} onClose={() => setPicker(false)} />
-            )}
-          </div>
-        </div>
-      ) : (
-        <div
-          className="dmsBar"
-          role="button"
-          tabIndex={0}
-          aria-expanded={open}
-          aria-controls="dmsPanel"
-          title="多服务器终端面板（Ctrl+` 切换）"
-          onClick={() => setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setOpen(true);
-            }
-          }}
-        >
-          <span className="dmsBarLead" aria-hidden>
-            {Icon.terminal()}
-          </span>
-          <span className="dmsBarTitle">多服务器终端{tabs.length > 0 ? " · " + tabs.length : ""}</span>
-          <span className="dmsBarState">{stateLabel}</span>
-          <span className="dmsBarActions" onClick={(e) => e.stopPropagation()}>
-            <button className="dmsBarAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
-              {Icon.gear()}
-            </button>
-          </span>
-          <span className="dmsBarChevron" aria-hidden>
-            {Icon.chevronUp()}
-          </span>
-        </div>
-      )}
-      {drawer && (
-        <ServerDrawer
-          servers={servers}
-          defaults={defaults}
-          onClose={() => setDrawer(false)}
-          onChanged={refreshServers}
-          onConnect={(s) => {
-            setDrawer(false);
-            connectTo(s);
-          }}
-        />
-      )}
+          ))
+        )}
+      </div>
     </div>
   );
 }
 
-/* ---------------- focus view (frame-wide, root scope) ---------------- */
-
-/** Frame-wide visibility signal for the Focus View (ADR-0005). */
-let focusVisible = false;
-const focusListeners = new Set<() => void>();
-export function setFocusVisible(v: boolean) {
-  const next = Boolean(v);
-  if (next === focusVisible) return;
-  focusVisible = next;
-  for (const l of [...focusListeners]) l();
-}
-export function getFocusVisible() {
-  return focusVisible;
-}
-function subscribeFocusVisible(listener: () => void) {
-  focusListeners.add(listener);
-  return () => {
-    focusListeners.delete(listener);
-  };
-}
-
 /**
- * The Focus View: a single frame-wide surface covering the whole GUI for
- * focused terminal work, isolated from the conversation (ADR-0005). Hosts the
- * full Grid (cap 4, all five templates) plus a toolbar with parity to the
- * Dock. Renders nothing while inactive; sessions and Grid state are global,
- * so entering/exiting never interrupts anything.
+ * The Terminal Window: one floating, draggable, resizable window over the
+ * whole GUI (registered in shell.overlay, root scope). It is a viewport over
+ * the single global workspace tree (ADR-0006); maximized it fills the frame.
+ * The title bar drags (clamped to keep it visible), double-click maximizes,
+ * the corner handle resizes, opening uses a scale+fade animation (skipped
+ * under prefers-reduced-motion), and when the window loses focus only the
+ * frame dims — terminal content always stays fully readable.
  */
-export function FocusView() {
-  const visible = React.useSyncExternalStore(subscribeFocusVisible, getFocusVisible);
-
-  /* ---- theme chain (shared hook) ---- */
+export function TerminalWindow() {
+  const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
+  const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
+  const { tree, commitTree } = useTreeState(visible);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
 
-  /* ---- world state (projections of host truth) ---- */
+  const [tabs, setTabs] = React.useState<TermTab[]>([]);
   const [servers, setServers] = React.useState<ServerView[]>([]);
   const [defaults, setDefaults] = React.useState<ServerDefaults | null>(null);
-  const [tabs, setTabs] = React.useState<TermTab[]>([]);
-  const [active, setActive] = React.useState<string | null>(null);
-  const { grid, commitGrid } = useGridState(visible);
   const [drawer, setDrawer] = React.useState(false);
   const [picker, setPicker] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [gridSize, setGridSize] = React.useState({ w: 0, h: 0 });
+  const [activePath, setActivePath] = React.useState<number[] | null>(null);
+  const [listOpen, setListOpen] = React.useState(false);
+  const [win, setWin] = React.useState(loadWin);
+  const [size, setSize] = React.useState({ w: 0, h: 0 });
+  const [focused, setFocused] = React.useState(true);
+  const [opening, setOpening] = React.useState(false);
   const bodyRef = React.useRef<HTMLDivElement>(null);
+
+  /* ---- world state: sessions + servers (projections of host truth) ---- */
+  React.useEffect(() => {
+    if (!visible) return;
+    refreshServers();
+    refreshDefaults();
+    api("/sessions")
+      .then((b) => {
+        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
+          b.sessions ?? [];
+        setTabs(
+          remote.map((s) => ({
+            id: s.id,
+            serverId: s.serverId,
+            label: s.serverName || s.label,
+            status: s.exited ? "closed" : "connecting",
+          })),
+        );
+        if (remote.length > 0 && activePath === null) {
+          // focus the first block holding a session, if any
+          const p = findPath(tree, remote[0].id);
+          if (p !== null) setActivePath(p);
+        }
+      })
+      .catch(() => {});
+  }, [visible]);
 
   const refreshServers = React.useCallback(async () => {
     try {
@@ -1868,73 +1647,129 @@ export function FocusView() {
     }
   }, []);
 
+  /* ---- measure content for canSplit ---- */
+  React.useEffect(() => {
+    const el = bodyRef.current;
+    if (el === null) return;
+    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [visible, maximized]);
+
+  /* ---- opening animation (skipped under reduced motion) ---- */
   React.useEffect(() => {
     if (!visible) return;
-    refreshServers();
-    refreshDefaults();
-    // Rebuild tabs from the host (host-owned sessions, ADR-0004).
-    api("/sessions")
-      .then((b) => {
-        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
-          b.sessions ?? [];
-        setTabs(
-          remote.map((s) => ({
-            id: s.id,
-            serverId: s.serverId,
-            label: s.serverName || s.label,
-            status: s.exited ? "closed" : "connecting",
-          })),
-        );
-        if (remote.length > 0) setActive(remote[0].id);
-      })
-      .catch(() => {});
-    // Measure the Terminal Area for fitCount.
-    const el = bodyRef.current;
-    let ro: ResizeObserver | null = null;
-    if (el !== null) {
-      const measure = () => setGridSize({ w: el.clientWidth, h: el.clientHeight });
-      measure();
-      ro = new ResizeObserver(measure);
-      ro.observe(el);
-    }
-    return () => {
-      ro?.disconnect();
-    };
-  }, [visible, refreshServers, refreshDefaults]);
+    if (prefersReducedMotion()) return;
+    setOpening(true);
+    const t = setTimeout(() => setOpening(false), 170);
+    return () => clearTimeout(t);
+  }, [visible]);
 
-  // Esc exits back to the Dock.
+  /* ---- focus dimming: only the frame dims, content stays readable ---- */
+  React.useEffect(() => {
+    if (!visible) return;
+    const onFocus = () => setFocused(true);
+    const onBlur = () => setFocused(false);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [visible]);
+
+  /* ---- Esc: exit maximized first, then close the window ---- */
   React.useEffect(() => {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setFocusVisible(false);
+      if (e.key !== "Escape") return;
+      if (getTerminalMaximized()) setTerminalMaximized(false);
+      else setTerminalVisible(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [visible]);
 
-  const visCount = gridSize.w > 0 ? fitCount(grid.template, gridSize.w, gridSize.h, 4) : 0;
-  const cycleTemplate = () => {
-    const i = TEMPLATES.indexOf(grid.template);
-    const next = TEMPLATES[(i + 1) % TEMPLATES.length];
-    commitGrid(gridWithTemplate(grid, next));
+  /* ---- window chrome: move (clamped) / resize / maximize ---- */
+  const startMove = (e: React.PointerEvent) => {
+    if (e.button !== 0 || maximized) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    const sx = e.clientX - win.x;
+    const sy = e.clientY - win.y;
+    const move = (ev: PointerEvent) => {
+      const x = Math.min(Math.max(0, ev.clientX - sx), Math.max(0, window.innerWidth - 60));
+      const y = Math.min(Math.max(0, ev.clientY - sy), Math.max(0, window.innerHeight - 36));
+      setWin((w) => ({ ...w, x, y }));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setWin((w) => {
+        saveWin(w);
+        return w;
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   };
 
+  const startResize = (e: React.PointerEvent) => {
+    if (e.button !== 0 || maximized) return;
+    e.preventDefault();
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const sw = win.w;
+    const sh = win.h;
+    const move = (ev: PointerEvent) => {
+      const w = Math.max(480, Math.min(window.innerWidth - 24, sw + (ev.clientX - sx)));
+      const h = Math.max(320, Math.min(window.innerHeight - 24, sh + (ev.clientY - sy)));
+      setWin((p) => ({ ...p, w, h }));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setWin((w) => {
+        saveWin(w);
+        return w;
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const toggleMax = () => setTerminalMaximized(!getTerminalMaximized());
+
+  /* ---- tree mutations ---- */
+  const focusBlock = (path: number[]) => setActivePath(path);
+  const placeInto = (sessionId: string) => {
+    // put into the focused block if it is empty, else the first empty leaf,
+    // else the root (replacing whatever is there when the tree is a single
+    // occupied leaf would destroy it — so replace the focused block instead).
+    let target = activePath;
+    if (target !== null && nodeAtPath(tree, target)?.sessionId !== null) target = null;
+    if (target === null) {
+      const empty = findEmptyLeaf(tree);
+      target = empty ?? activePath ?? [];
+    }
+    if (target !== null) commitTree(treeSetSession(tree, target, sessionId));
+    setListOpen(false);
+  };
   const connectTo = async (s: ServerView) => {
     setBusy(true);
     setPicker(false);
     try {
-      const body = await api("/sessions", {
-        method: "POST",
-        body: JSON.stringify({ serverId: s.id, cols: 80, rows: 24 }),
-      });
-      const tab: TermTab = {
-        id: body.id,
-        serverId: s.id,
-        label: s.name || `${s.username}@${s.host}`,
-        status: "connecting",
-      };
+      const body = await api("/sessions", { method: "POST", body: JSON.stringify({ serverId: s.id, cols: 80, rows: 24 }) });
+      const tab: TermTab = { id: body.id, serverId: s.id, label: s.name || `${s.username}@${s.host}`, status: "connecting" };
       setTabs((prev) => [...prev, tab]);
-      setActive(body.id);
+      // open it in the focused block (or the first empty leaf / a new right split)
+      let target = activePath;
+      if (target !== null && nodeAtPath(tree, target)?.sessionId !== null) target = null;
+      if (target === null) target = findEmptyLeaf(tree) ?? [];
+      const next = treeSetSession(tree, target ?? [], body.id);
+      commitTree(next);
     } catch (e) {
       window.alert("连接失败：" + String(e instanceof Error ? e.message : e));
     } finally {
@@ -1942,112 +1777,73 @@ export function FocusView() {
     }
   };
   const closeTab = async (id: string) => {
-    // Optimistic removal, then reconcile with the host: if the close request
-    // failed the session is still alive and must reappear (visible feedback,
-    // not a silent lie); if it 404'd (already reaped) it stays gone.
-    setTabs((prev) => {
-      const idx = prev.findIndex((t) => t.id === id);
-      const next = prev.filter((t) => t.id !== id);
-      if (idx !== -1) {
-        setActive((a) => (a === id ? (next[Math.min(idx, next.length - 1)]?.id ?? null) : a));
-      }
-      return next;
-    });
     try {
       await api("/sessions/" + id, { method: "DELETE" });
-    } catch (e) {
-      console.error("[dsh-ssh-hub] close failed, reconciling:", e);
-      try {
-        const body = await api("/sessions");
-        const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> =
-          body.sessions ?? [];
-        setTabs(
-          remote.map((s) => ({
-            id: s.id,
-            serverId: s.serverId,
-            label: s.serverName || s.label,
-            status: s.exited ? "closed" : "connecting",
-          })),
-        );
-      } catch {
-        /* host unreachable; the session will reappear on the next rebuild */
-      }
+    } catch {
+      /* the session may already be gone; reconcile below */
+    }
+    try {
+      const body = await api("/sessions");
+      const remote: Array<{ id: string; serverId: string; label: string; serverName: string; exited: boolean }> = body.sessions ?? [];
+      setTabs(remote.map((s) => ({ id: s.id, serverId: s.serverId, label: s.serverName || s.label, status: s.exited ? "closed" : "connecting" })));
+    } catch {
+      /* host unreachable */
     }
   };
-  const pinnedIndex = (id: string) => grid.tiles.indexOf(id);
-  const pinTab = (id: string) => {
-    const free = grid.tiles.indexOf(null);
-    if (free === -1) return;
-    commitGrid(gridPin(grid, id, free));
-    setActive(id);
-  };
-  const unpinTile = (idx: number) => commitGrid(gridUnpin(grid, idx));
-  const reorderTiles = (from: number, to: number) => commitGrid(gridReorder(grid, from, to));
-  const pickEmpty = (idx: number, sessionId: string) => {
-    commitGrid(gridPin(grid, sessionId, idx));
-    setActive(sessionId);
-  };
 
-  const activeTab = tabs.find((t) => t.id === active) ?? null;
+  /* block numbers for Ctrl+Shift+N navigation hint */
+  const numberByPath = React.useMemo(() => {
+    const m = new Map<string, number>();
+    let n = 1;
+    const walk = (node: any, path: number[]) => {
+      if (node.kind === "leaf") m.set(path.join("."), n++);
+      else {
+        walk(node.a, [...path, 0]);
+        walk(node.b, [...path, 1]);
+      }
+    };
+    walk(tree, []);
+    return m;
+  }, [tree]);
+
+  if (!visible) return null;
+
+  const placedCount = collectSessions(tree).length;
   const stateLabel =
     tabs.length === 0
       ? servers.length === 0
         ? "未配置服务器"
         : "就绪"
-      : activeTab === null
-        ? "空闲"
-        : activeTab.status === "connecting"
-          ? "连接中…"
-          : activeTab.status === "live"
-            ? activeTab.label
-            : activeTab.status === "error"
-              ? "连接失败"
-              : "已断开";
-
-  if (!visible) return null;
+      : `${placedCount} 个会话在窗口中`;
 
   return (
-    <div className="dmsFocusRoot" role="dialog" aria-label="终端专注视图">
-      <div className="dmsFocusHead">
-        <span className="dmsFocusTitle">{Icon.terminal()} 终端专注视图</span>
-        <TabStrip
-          tabs={tabs}
-          active={active}
-          grid={grid}
-          serversCount={servers.length}
-          busy={busy}
-          stateLabel={stateLabel}
-          onSelect={(id) => {
-            setActive(id);
-            // Clicking an unpinned tab shows it (story 6): pin into the
-            // first free Tile, or replace the last one when the Grid is full.
-            if (pinnedIndex(id) === -1) {
-              const free = grid.tiles.indexOf(null);
-              const target = free !== -1 ? free : grid.tiles.length - 1;
-              commitGrid(gridPin(grid, id, target));
-            }
-          }}
-          onClose={closeTab}
-          onPinToggle={(id) => {
-            const idx = pinnedIndex(id);
-            if (idx >= 0) unpinTile(idx);
-            else pinTab(id);
-          }}
-          onNew={() => setPicker((v) => !v)}
-        />
-        <button className="dmsFocusExit" onClick={() => setFocusVisible(false)} title="退出（Esc）">
-          {Icon.close()} 退出（Esc）
-        </button>
+    <div
+      className={"dmsWin" + (maximized ? " isMax" : "") + (focused ? "" : " isBlur") + (opening ? " isOpening" : "")}
+      style={maximized ? undefined : { left: win.x, top: win.y, width: win.w, height: win.h }}
+      onPointerDown={() => setFocused(true)}
+      role="dialog"
+      aria-label="SSH 终端"
+    >
+      <div className="dmsWinBar" onPointerDown={startMove} onDoubleClick={toggleMax}>
+        <span className="dmsWinTitle">{Icon.terminal()} SSH 终端{stateLabel !== "" ? " · " + stateLabel : ""}</span>
+        <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
+          <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
+            {maximized ? Icon.minimize() : Icon.maximize()}
+          </button>
+          <button className="dmsWinAction" title="收起（Esc）" aria-label="收起" onClick={() => setTerminalVisible(false)}>
+            {Icon.close()}
+          </button>
+        </span>
       </div>
-      <div className="dmsTool">
+      <div className="dmsWinTool">
         <button className="dmsToolBtn" disabled={servers.length === 0 || busy} onClick={() => setPicker((v) => !v)}>
           {Icon.plus()} 新会话
         </button>
         <button className="dmsToolBtn" onClick={() => setDrawer(true)}>
           {Icon.gear()} 管理服务器（{servers.length}）
         </button>
-        <button className="dmsToolBtn" title="布局模板（点击切换）" aria-label="布局模板（点击切换）" onClick={cycleTemplate}>
-          布局:{TEMPLATE_LABEL[grid.template] ?? grid.template}
+        <button className={"dmsToolBtn" + (listOpen ? " isActive" : "")} onClick={() => setListOpen((v) => !v)} title="未放置的会话">
+          {Icon.list()} 会话清单{tabs.length - placedCount > 0 ? "（" + (tabs.length - placedCount) + "）" : ""}
         </button>
         <button
           className="dmsToolBtn"
@@ -2060,34 +1856,29 @@ export function FocusView() {
           {OVERRIDE_LABEL[override]}
         </button>
       </div>
-      <div className="dmsBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
-        {tabs.length === 0 ? (
-          <div className="dmsEmpty">
-            <span>{servers.length === 0 ? "还没有服务器，先添加一台" : "选择一台服务器开始连接"}</span>
-            {servers.length > 0 ? (
-              <button className="dmsEmptyBtn" onClick={() => setPicker(true)}>
-                {Icon.plus()} 连接服务器
-              </button>
-            ) : (
-              <button className="dmsEmptyBtn" onClick={() => setDrawer(true)}>
-                {Icon.plus()} 添加服务器
-              </button>
-            )}
-          </div>
-        ) : visCount === 0 ? (
-          <div className="dmsDegrade">窗口太小，终端已收回到标签栏。</div>
-        ) : (
-          <GridBody
-            grid={grid}
+      <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
+        <SplitTreeView
+          node={tree}
+          path={[]}
+          tree={tree}
+          commitTree={commitTree}
+          tabs={tabs}
+          activePath={activePath}
+          onFocusBlock={focusBlock}
+          onStatus={(tabId, patch) => setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))}
+          onEmptyClick={(path) => {
+            setActivePath(path);
+            setListOpen(true);
+          }}
+          numberByPath={numberByPath}
+          blockSize={{ w: size.w, h: size.h }}
+        />
+        {listOpen && (
+          <SessionListPanel
+            tree={tree}
             tabs={tabs}
-            visCount={visCount}
-            surface="focus"
-            onStatus={(tabId, patch) =>
-              setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))
-            }
-            onUnpin={unpinTile}
-            onReorder={reorderTiles}
-            onPickEmpty={pickEmpty}
+            onPlace={(id) => placeInto(id)}
+            onClose={() => setListOpen(false)}
           />
         )}
         {picker && (
@@ -2106,8 +1897,24 @@ export function FocusView() {
           }}
         />
       )}
+      {!maximized && <div className="dmsWinResize" onPointerDown={startResize} title="拖动缩放" />}
     </div>
   );
+}
+
+function findEmptyLeaf(tree: any): number[] | null {
+  let found: number[] | null = null;
+  const walk = (node: any, path: number[]) => {
+    if (found !== null) return;
+    if (node.kind === "leaf") {
+      if (node.sessionId === null) found = [...path];
+      return;
+    }
+    walk(node.a, [...path, 0]);
+    walk(node.b, [...path, 1]);
+  };
+  walk(tree, []);
+  return found;
 }
 
 /* ---------------- sidebar entry (sidebar.footer.action) ---------------- */
@@ -2123,7 +1930,7 @@ export function SidebarEntry({ wide }: { wide?: boolean }) {
       className={"dmsSidebarEntry" + (wide === false ? " isRail" : "")}
       title="SSH 终端（专注视图）"
       aria-label="SSH 终端（专注视图）"
-      onClick={() => setFocusVisible(true)}
+      onClick={() => setTerminalVisible(true)}
     >
       <span className="dmsSidebarEntryIcon" aria-hidden>
         {Icon.terminal(15)}
