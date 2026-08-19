@@ -110,19 +110,6 @@ const CSS = `
 .dmsToolBtn.primary{background:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));border-color:transparent;color:#fff}
 .dmsToolBtn.primary:hover:not(:disabled){filter:brightness(1.1)}
 .dmsBody{flex:auto;min-height:0;position:relative;background:var(--dmst-bg,#1e2128);box-shadow:inset 0 1px 0 var(--dsw-alias-border-l1)}
-/* Grid: Tiles arrange pinned Terminal Sessions (ADR-0005). */
-.dmsGrid{position:relative;height:100%;display:grid;gap:4px;padding:4px 6px 8px;box-sizing:border-box}
-.dmsTile{position:relative;min-width:0;min-height:0;background:var(--dmst-bg,#1e2128);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
-.dmsTile.isDragFrom{opacity:.75}
-.dmsTile.isDragTarget{outline:2px solid var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));outline-offset:-2px}
-.dmsTileEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12px;cursor:pointer;background:var(--dmst-picker-bg,#262a33);border:none;width:100%}
-.dmsTileEmpty:hover{background:var(--dmst-picker-item-bg-hover,#2e333d);color:var(--dmst-picker-item-fg,#e6e8ee)}
-.dmsTileUnpin{position:absolute;top:6px;right:6px;z-index:6;width:24px;height:24px;border:none;background:rgba(0,0,0,.45);color:#e6e8ee;border-radius:7px;cursor:pointer;display:grid;place-items:center;padding:0;opacity:0;transition:opacity .12s}
-.dmsTile:hover .dmsTileUnpin,.dmsTileUnpin:focus-visible{opacity:1}
-.dmsTileUnpin:hover{background:rgba(231,72,86,.35)}
-.dmsTilePick{position:absolute;inset:0;z-index:7;display:flex;flex-direction:column;background:var(--dmst-picker-bg,#262a33);padding:8px;overflow-y:auto}
-.dmsTilePickTitle{font-size:11px;font-weight:600;color:var(--dmst-picker-label-fg,#8b90a0);padding:2px 6px 6px}
-.dmsDegrade{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12px;text-align:center;padding:20px}
 .dmsPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:var(--dmst-bg,#1e2128)}
 .dmsPane.isActive{display:block}
 .dmsEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dmst-empty-fg,#8b90a0);font-family:Inter,var(--dsw-font-family);font-size:12px}
