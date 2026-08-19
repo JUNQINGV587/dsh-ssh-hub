@@ -2222,23 +2222,6 @@ export function TerminalWindow() {
             {Icon.close()}
           </button>
         </span>
-        <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
-          <button className={"dmsWinAction" + (sidebarOpen ? " isOn" : "")} title="Widgets（服务器 / 未放置会话）" aria-label="Widgets" onClick={() => setSidebarOpen((v) => !v)}>
-            {Icon.list()}
-          </button>
-          <button className="dmsWinAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
-            {Icon.gear()}
-          </button>
-          <button className="dmsWinAction" title={"终端主题：" + OVERRIDE_LABEL[override]} aria-label="终端主题" onClick={cycleOverride}>
-            {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
-          </button>
-          <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
-            {maximized ? Icon.minimize() : Icon.maximize()}
-          </button>
-          <button className="dmsWinAction" title="收起（Esc）" aria-label="收起" onClick={() => setTerminalVisible(false)}>
-            {Icon.close()}
-          </button>
-        </span>
       </div>
       <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
         <SplitTreeView
