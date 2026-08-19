@@ -41,10 +41,13 @@ export function normalizeCollection(input) {
   const seen = new Set();
   const items = input.items
     .map((it) => {
-      if (it?.kind === "tab" && typeof it.sessionId === "string") {
-        if (seen.has(it.sessionId)) return null;
-        seen.add(it.sessionId);
-        return { kind: "tab", sessionId: it.sessionId, name: normName(it.name, it.sessionId) };
+      if (it?.kind === "tab") {
+        const sessionId = typeof it.sessionId === "string" && it.sessionId.length > 0 ? it.sessionId : null;
+        if (sessionId !== null) {
+          if (seen.has(sessionId)) return null;
+          seen.add(sessionId);
+        }
+        return { kind: "tab", sessionId, name: normName(it.name, sessionId ?? "新标签") };
       }
       if (it?.kind === "workspace" && Array.isArray(it.members)) {
         const members = it.members
@@ -105,6 +108,14 @@ export function ungroup(collection, wsIdx) {
   const items = [...collection.items];
   items.splice(wsIdx, 1, ...tabs);
   return { items, activeIndex: collection.activeIndex };
+}
+
+/** Append a new empty tab (sessionId null) — Alt+t semantics. */
+export function addTab(collection) {
+  return {
+    ...collection,
+    items: [...collection.items, { kind: "tab", sessionId: null, name: "标签 " + (collection.items.length + 1) }],
+  };
 }
 
 /** Append a tab as a member of the workspace at `wsIdx`. */
@@ -182,6 +193,14 @@ export function renameItem(collection, idx, name) {
   const items = [...collection.items];
   items[idx] = { ...items[idx], name: normName(name, items[idx].name) };
   return { ...collection, items };
+}
+
+/** Remove the item at `idx` (a tab or a whole workspace). */
+export function removeTab(collection, idx) {
+  if (idx < 0 || idx >= collection.items.length) return collection;
+  const items = collection.items.filter((_, i) => i !== idx);
+  const activeIndex = Math.min(collection.activeIndex, Math.max(0, items.length - 1));
+  return { ...collection, items, activeIndex };
 }
 
 export function setActiveIndex(collection, idx) {

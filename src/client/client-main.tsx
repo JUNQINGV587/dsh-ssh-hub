@@ -17,34 +17,21 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "../shared/terminal-themes.mjs";
+
 import {
-  newBlock,
-  autoPlace as layoutAutoPlace,
-  removeBlock as layoutRemoveBlock,
-  setSession as layoutSetSession,
-  dropBlock as layoutDropBlock,
-  resizeNode as layoutResizeNode,
-  nodeAt as layoutNodeAt,
-  findArr as layoutFindArr,
-  collectSessions as collectLayoutSessions,
-  layoutReplaceAt,
-  classifyDrop,
-} from "../shared/layout.mjs";
-import {
-  defaultCollection,
-  activeTree,
-  setActiveTree,
-  createWorkspace,
-  removeWorkspace,
-  renameWorkspace,
-  setWorkspaceMeta,
+  normalizeCollection,
   addTab,
   removeTab,
-  renameTab,
-  setActiveTab,
-  setActiveWorkspace,
+  renameItem,
+  setActiveIndex,
+  addMember,
+  removeMember,
+  reorderMember,
+  swapMembers,
+  setOrientation,
+  setSize,
   collectSessions as collectAllSessions,
-} from "../shared/workspace.mjs";
+} from "../shared/group.mjs";
 /* Settings card + the shared bound settings scope (rc.7 settings.plugin.item).
  * getSettingsScope is imported for module-internal use (the theme chain);
  * SettingsCard/setSettingsScope are re-exported for the build.mjs wrapper. */
@@ -1252,137 +1239,198 @@ function prefersReducedMotion() {
  * swaps the two sessions, onto its edges opens a new pane in that direction
  * (RGB-coded preview: red=left, green=right, cyan=top, blue=bottom).
  */
-function SplitTreeView({
-  node,
-  path,
-  tree,
-  commitTree,
+/* ---------------- items view (tab full-window / workspace side-by-side) ---- */
+
+/** A workspace member tile: status badge + terminal, hover float actions. */
+function MemberTile({
+  member,
   tabs,
-  activePath,
-  onFocusBlock,
   onStatus,
-  onEmptyClick,
-  numberByPath,
-  blockSize,
-  drag,
-  onDrag,
   onMagnify,
   isMagnified,
-  dir,
+  onClose,
+  onRemove,
 }: {
-  node: any;
-  path: number[];
-  tree: any;
-  commitTree: (next: any) => void;
+  member: { sessionId: string; name: string };
   tabs: TermTab[];
-  activePath: number[] | null;
-  onFocusBlock: (path: number[]) => void;
   onStatus: (tabId: string, patch: Partial<TermTab>) => void;
-  onEmptyClick: (path: number[]) => void;
-  numberByPath: Map<string, number>;
-  blockSize: { w: number; h: number };
-  drag: DragState | null;
-  onDrag: (d: DragState | null) => void;
-  onMagnify: (path: number[]) => void;
+  onMagnify: () => void;
   isMagnified: boolean;
-  dir: "row" | "col";
+  onClose: () => void;
+  onRemove: () => void;
 }) {
-  if (node.kind === "block") {
-    return (
-      <BlockView
-        path={path}
-        sessionId={node.sessionId}
-        tree={tree}
-        commitTree={commitTree}
-        tabs={tabs}
-        active={activePath !== null && samePath(activePath, path)}
-        onFocus={() => onFocusBlock(path)}
-        onStatus={onStatus}
-        onEmptyClick={onEmptyClick}
-        number={numberByPath.get(path.join(".")) ?? 0}
-        size={blockSize}
-        drag={drag}
-        onDrag={onDrag}
-        onMagnify={onMagnify}
-        isMagnified={isMagnified}
-        dir={dir}
-      />
-    );
-  }
-  const isRow = node.dir === "row";
-  const total = node.sizes.reduce((a, b) => a + b, 0) || node.children.length;
+  const tab = tabs.find((t) => t.id === member.sessionId);
+  const dotClass =
+    tab === undefined || tab.status === "connecting"
+      ? "dmsBlockDot isConnecting"
+      : tab.status === "live"
+        ? "dmsBlockDot isLive"
+        : "dmsBlockDot isClosed";
   return (
-    <div className={"dmsSplit" + (isRow ? " isH" : " isV")}>
-      {node.children.map((child, i) => {
-        const sizePct = total > 0 ? (node.sizes[i] / total) * 100 : 100 / node.children.length;
-        const childSize = isRow
-          ? { w: blockSize.w * (sizePct / 100), h: blockSize.h }
-          : { w: blockSize.w, h: blockSize.h * (sizePct / 100) };
-        return (
-          <React.Fragment key={i}>
-            <div className="dmsSplitPane" style={{ flex: `${sizePct}% 1 0` }}>
-              <SplitTreeView
-                node={child}
-                path={[...path, i]}
-                tree={tree}
-                commitTree={commitTree}
-                tabs={tabs}
-                activePath={activePath}
-                onFocusBlock={onFocusBlock}
-                onStatus={onStatus}
-                onEmptyClick={onEmptyClick}
-                numberByPath={numberByPath}
-                blockSize={childSize}
-                drag={drag}
-                onDrag={onDrag}
-                onMagnify={onMagnify}
-                isMagnified={isMagnified}
-                dir={node.dir}
-              />
-            </div>
-            {i < node.children.length - 1 && (
-              <Divider path={[...path, i]} dir={node.dir} tree={tree} commitTree={commitTree} container={blockSize} />
-            )}
-          </React.Fragment>
-        );
-      })}
+    <div className="dmsMember" onClick={() => onMagnify()}>
+      <span className="dmsBlockBadge" title={member.name}>
+        <span className={dotClass} />
+        <span className="dmsBlockBadgeNum">{member.name}</span>
+      </span>
+      <span className="dmsBlockFloat">
+        <button
+          className="dmsSplitBtn"
+          title={isMagnified ? "还原" : "放大"}
+          aria-label={isMagnified ? "还原" : "放大"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMagnify();
+          }}
+        >
+          {isMagnified ? Icon.minimize() : Icon.maximize()}
+        </button>
+        <button className="dmsBlockRemove" title="移出组合（会话回清单）" aria-label="移出组合" onClick={(e) => { e.stopPropagation(); onRemove(); }}>
+          {Icon.close()}
+        </button>
+      </span>
+      <XtermPane
+        tab={tab ?? { id: member.sessionId, serverId: "", label: member.name, status: "connecting" }}
+        active={true}
+        surface="window"
+        onStatus={(patch) => onStatus(member.sessionId, patch)}
+      />
     </div>
   );
 }
 
-function samePath(a: number[], b: number[]) {
-  return a.length === b.length && a.every((v, i) => v === b[i]);
+/** The active item: a tab shows its session full-window; a workspace shows
+ *  its members side-by-side (orientation + draggable dividers). */
+function ItemsView({
+  collection,
+  tabs,
+  magnifiedMember,
+  onMagnifyMember,
+  onStatus,
+  onCommit,
+  onCloseItem,
+  onPlace,
+  openSidebar,
+}: {
+  collection: any;
+  tabs: TermTab[];
+  magnifiedMember: number | null;
+  onMagnifyMember: (idx: number | null) => void;
+  onStatus: (tabId: string, patch: Partial<TermTab>) => void;
+  onCommit: (next: any) => void;
+  onCloseItem: (idx: number) => void;
+  onPlace: (sessionId: string) => void;
+  openSidebar: () => void;
+}) {
+  const it = collection.items[collection.activeIndex] ?? null;
+  if (it === null) {
+    return (
+      <div className="dmsItemsEmpty">
+        <span>还没有会话</span>
+        <button className="dmsEmptyBtn" onClick={openSidebar}>
+          {Icon.plus()} 打开侧栏放入会话
+        </button>
+      </div>
+    );
+  }
+  if (it.kind === "tab") {
+    if (it.sessionId === null) {
+      return (
+        <div className="dmsItemsEmpty">
+          <span>空标签——从右侧边栏放入会话</span>
+          <button className="dmsEmptyBtn" onClick={openSidebar}>
+            {Icon.plus()} 打开侧栏
+          </button>
+        </div>
+      );
+    }
+    const tab = tabs.find((t) => t.id === it.sessionId);
+    return (
+      <XtermPane
+        tab={tab ?? { id: it.sessionId, serverId: "", label: it.name, status: "connecting" }}
+        active={true}
+        surface="window"
+        onStatus={(patch) => onStatus(it.sessionId!, patch)}
+      />
+    );
+  }
+  // workspace: members side-by-side
+  const total = it.sizes.reduce((a, b) => a + b, 0) || it.members.length;
+  const shown = magnifiedMember !== null ? [it.members[magnifiedMember]] : it.members;
+  const shownSizes = magnifiedMember !== null ? [1] : it.sizes;
+  const shownTotal = shownSizes.reduce((a, b) => a + b, 0) || shown.length;
+  return (
+    <div className={"dmsWsView" + (it.orientation === "v" ? " isV" : " isH")}>
+      {shown.map((m, i) => {
+        const idx = magnifiedMember !== null ? magnifiedMember : i;
+        const pct = shownTotal > 0 ? (shownSizes[i] / shownTotal) * 100 : 100 / shown.length;
+        return (
+          <React.Fragment key={m.sessionId}>
+            <div className="dmsWsMember" style={{ flex: `${pct}% 1 0` }}>
+              <MemberTile
+                member={m}
+                tabs={tabs}
+                onStatus={onStatus}
+                onMagnify={() => onMagnifyMember(magnifiedMember === idx ? null : idx)}
+                isMagnified={magnifiedMember === idx}
+                onClose={() => onCloseItem(collection.activeIndex)}
+                onRemove={() => onCommit(removeMember(collection, collection.activeIndex, idx).collection)}
+              />
+            </div>
+            {i < shown.length - 1 && (
+              <GroupDivider
+                wsIdx={collection.activeIndex}
+                memberIdx={idx}
+                orientation={it.orientation}
+                collection={collection}
+                onCommit={onCommit}
+              />
+            )}
+          </React.Fragment>
+        );
+      })}
+      {magnifiedMember === null && (
+        <button
+          className="dmsWsOrient"
+          title="切换并排方向（左右 / 上下）"
+          onClick={() => onCommit(setOrientation(collection, collection.activeIndex, it.orientation === "h" ? "v" : "h"))}
+        >
+          {it.orientation === "h" ? "⇄ 上下" : "⇅ 左右"}
+        </button>
+      )}
+    </div>
+  );
 }
 
-/** A draggable divider between two split panes; ratio updates on drop. */
-function Divider({
-  path,
-  dir,
-  tree,
-  commitTree,
-  container,
+/** Draggable divider between workspace members; adjusts the member's size. */
+function GroupDivider({
+  wsIdx,
+  memberIdx,
+  orientation,
+  collection,
+  onCommit,
 }: {
-  path: number[];
-  dir: "h" | "v";
-  tree: any;
-  commitTree: (next: any) => void;
-  container: { w: number; h: number };
+  wsIdx: number;
+  memberIdx: number;
+  orientation: "h" | "v";
+  collection: any;
+  onCommit: (next: any) => void;
 }) {
-  const dragRef = React.useRef<{ x: number; y: number; ratio: number } | null>(null);
+  const dragRef = React.useRef<{ x: number; y: number; size: number } | null>(null);
   const [overriding, setOverriding] = React.useState<number | null>(null);
-
   React.useEffect(() => {
     if (dragRef.current === null) return;
     const move = (e: PointerEvent) => {
       const d = dragRef.current;
       if (d === null) return;
-      const delta = dir === "h" ? (e.clientX - d.x) / container.w : (e.clientY - d.y) / container.h;
-      const ratio = Math.min(0.85, Math.max(0.15, d.ratio + delta));
-      setOverriding(ratio);
+      const el = (e.target as HTMLElement).closest(".dmsWsView") as HTMLElement | null;
+      const extent = el === null ? 600 : orientation === "h" ? el.clientWidth : el.clientHeight;
+      const delta = orientation === "h" ? (e.clientX - d.x) / extent : (e.clientY - d.y) / extent;
+      const size = Math.min(0.85, Math.max(0.15, d.size + delta));
+      setOverriding(size);
     };
     const up = () => {
       if (dragRef.current !== null && overriding !== null) {
-        commitTree(layoutResizeNode(tree, path, overriding));
+        onCommit(setSize(collection, wsIdx, memberIdx, overriding));
       }
       dragRef.current = null;
       setOverriding(null);
@@ -1393,360 +1441,16 @@ function Divider({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [dir, container.w, container.h, tree, path, commitTree, overriding]);
-
-  const shown = overriding ?? 0.5;
+  }, [orientation, collection, wsIdx, memberIdx, onCommit, overriding]);
   return (
     <div
-      className={"dmsDivider" + (dir === "row" ? " isV" : " isH")}
+      className={"dmsGroupDivider" + (orientation === "h" ? " isV" : " isH")}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
-        dragRef.current = { x: e.clientX, y: e.clientY, ratio: shown };
+        dragRef.current = { x: e.clientX, y: e.clientY, size: overriding ?? collection.items[wsIdx]?.sizes?.[memberIdx] ?? 1 };
       }}
-      style={dir === "row" ? { left: `calc(${shown * 100}% - 3px)` } : { top: `calc(${shown * 100}% - 3px)` }}
     />
-  );
-}
-
-function nodeAtPath(tree: any, path: number[]): any {
-  return layoutNodeAt(tree, path);
-}
-
-/** One block: a slim title bar over the terminal (or an empty slot). */
-/** A block drag in flight: which block started it and where the pointer is. */
-interface DragState {
-  fromPath: number[];
-  sessionId: string;
-  hover: { path: number[]; zone: DropZone } | null;
-  start: { x: number; y: number };
-}
-
-type DropZone =
-  | "swap"
-  | "inline-before"
-  | "inline-after"
-  | "outer-before"
-  | "outer-after"
-  | "inner-before"
-  | "inner-after";
-
-function BlockView({
-  path,
-  sessionId,
-  tree,
-  commitTree,
-  tabs,
-  active,
-  onFocus,
-  onStatus,
-  onEmptyClick,
-  number,
-  size,
-  drag,
-  onDrag,
-  onMagnify,
-  isMagnified,
-  dir,
-}: {
-  path: number[];
-  sessionId: string | null;
-  tree: any;
-  commitTree: (next: any) => void;
-  tabs: TermTab[];
-  active: boolean;
-  onFocus: () => void;
-  onStatus: (tabId: string, patch: Partial<TermTab>) => void;
-  onEmptyClick: (path: number[]) => void;
-  number: number;
-  size: { w: number; h: number };
-  drag: DragState | null;
-  onDrag: (d: DragState | null) => void;
-  onMagnify: (path: number[]) => void;
-  isMagnified: boolean;
-  dir: "row" | "col";
-}) {
-  const tab = sessionId !== null ? tabs.find((t) => t.id === sessionId) : undefined;
-  const ref = React.useRef<HTMLDivElement>(null);
-  const isDraggingThis = drag !== null && samePath(drag.fromPath, path);
-  // a press only becomes a drag after moving > 4px — clicking the bar to
-  // focus must not start a drag (and must not flash drop previews)
-  const pendingDragRef = React.useRef<{ x: number; y: number; path: number[]; sessionId: string } | null>(null);
-  React.useEffect(() => {
-    const move = (ev: PointerEvent) => {
-      const p = pendingDragRef.current;
-      if (p === null || drag !== null) return;
-      if (Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 4) {
-        pendingDragRef.current = null;
-        onDrag({ fromPath: p.path, sessionId: p.sessionId, hover: null, start: { x: p.x, y: p.y } });
-      }
-    };
-    const up = () => {
-      pendingDragRef.current = null;
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-  }, [drag, onDrag]);
-  // hover classification for this block while a drag is in flight
-  const myHover =
-    drag !== null && !isDraggingThis && drag.hover !== null && samePath(drag.hover.path, path)
-      ? drag.hover.zone
-      : null;
-
-  const remove = () => {
-    // Remove the block (its session, if any, returns to the unplaced list);
-    // the tree compresses depth automatically.
-    const [next] = layoutRemoveBlock(tree, path);
-    commitTree(next ?? newBlock(null));
-  };
-
-  const dragClass =
-    "dmsBlock" +
-    (active ? " isActive" : "") +
-    (myHover === "swap" ? " isSwapTarget" : "") +
-    (isDraggingThis ? " isDragging" : "");
-  // drag start: from the title bar (not buttons); engaged after 4px
-  const startBlockDrag = (e: React.PointerEvent) => {
-    if (e.button !== 0 || sessionId === null) return;
-    if ((e.target as HTMLElement).closest("button")) return;
-    e.preventDefault();
-    pendingDragRef.current = { x: e.clientX, y: e.clientY, path, sessionId };
-  };
-  // drop handling: swap or edge-split are applied by the parent on pointerup;
-  // here we classify hover as the pointer moves over this block.
-  const trackHover = (e: React.PointerEvent) => {
-    if (drag === null || isDraggingThis || ref.current === null) return;
-    const r = ref.current.getBoundingClientRect();
-    if (r.width === 0 || r.height === 0) return;
-    const zone = classifyDrop(dir, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-    const same = drag.hover !== null && samePath(drag.hover.path, path) && drag.hover.zone === zone;
-    if (!same) onDrag({ ...drag, hover: { path, zone } });
-  };
-  const dotClass =
-    sessionId === null
-      ? "dmsBlockDot"
-      : tab === undefined || tab.status === "connecting"
-        ? "dmsBlockDot isConnecting"
-        : tab.status === "live"
-          ? "dmsBlockDot isLive"
-          : "dmsBlockDot isClosed";
-  return (
-    <div
-      ref={ref}
-      className={dragClass}
-      onClick={onFocus}
-      onPointerEnter={trackHover}
-      onPointerMove={trackHover}
-    >
-      <div className="dmsBlockDrag" onPointerDown={startBlockDrag} title={sessionId !== null ? tab?.label ?? sessionId : "空块"} />
-      <span className="dmsBlockBadge" title={sessionId !== null ? tab?.label ?? sessionId : "空块"}>
-        <span className={dotClass} />
-        <span className="dmsBlockBadgeNum">{number}</span>
-      </span>
-      <span className="dmsBlockFloat">
-        <button
-          className="dmsSplitBtn"
-          title={isMagnified ? "还原（Alt+m / Esc）" : "放大此块（Alt+m）"}
-          aria-label={isMagnified ? "还原" : "放大"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onMagnify(path);
-          }}
-        >
-          {isMagnified ? Icon.minimize() : Icon.maximize()}
-        </button>
-        <button className="dmsBlockRemove" title="移除（会话回到未放置清单）" aria-label="移除" onClick={(e) => { e.stopPropagation(); remove(); }}>
-          {Icon.close()}
-        </button>
-      </span>
-      {sessionId === null ? (
-        <div
-          className="dmsBlockEmpty"
-          title="空块"
-          onClick={() => onEmptyClick(path)}
-        >
-          <span className="dmsBlockEmptyHint">空</span>
-        </div>
-      ) : (
-        <XtermPane tab={tab ?? { id: sessionId, serverId: "", label: "…", status: "connecting" }} active={true} surface="window" onStatus={(patch) => onStatus(sessionId, patch)} />
-      )}
-      {myHover !== null && <div className={"dmsDropHint dmsDrop-" + myHover} data-dir={dir} aria-hidden />}
-    </div>
-  );
-}
-
-/* ---------------- server form ---------------- */
-
-/* ---------------- shared hooks (Dock + Focus View) ---------------- */
-
-/**
- * The theme chain, shared by both surfaces: per-browser Theme Override wins,
- * then the defaultTerminalTheme Server Default, then the GUI scheme. Also
- * exposes the Terminal Area surface variables and hot-swaps every open xterm
- * (all surfaces) when the resolved theme changes.
- */
-function useTerminalTheme() {
-  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
-  const [override, setOverride] = React.useState<ThemeOverride>(() => {
-    try {
-      const v = localStorage.getItem(OVERRIDE_KEY);
-      if (v === "auto" || v === "dark" || v === "light") return v;
-    } catch {
-      /* ignore */
-    }
-    return "auto";
-  });
-  const cycleOverride = () => {
-    setOverride((prev) => {
-      const next = OVERRIDE_ORDER[(OVERRIDE_ORDER.indexOf(prev) + 1) % OVERRIDE_ORDER.length];
-      try {
-        localStorage.setItem(OVERRIDE_KEY, next);
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  };
-  const defaultTheme = React.useSyncExternalStore(subscribeDefaultTheme, getDefaultTheme);
-  const resolvedTheme: "dark" | "light" =
-    override !== "auto" ? override : defaultTheme !== "auto" ? defaultTheme : guiScheme;
-
-  // Push the Server Default into the theme signal whenever the settings
-  // scope emits (hot-swaps open terminals through the effect below).
-  React.useEffect(() => {
-    const scope = getSettingsScope();
-    if (scope === null) return;
-    const push = () => pushDefaultTheme(scope.getSnapshot().value?.defaultTerminalTheme);
-    push();
-    return scope.subscribe(push);
-  }, []);
-
-  // Terminal Area surface colors, applied declaratively so they are correct
-  // the moment the surface body mounts.
-  const surfaceVars = React.useMemo<React.CSSProperties>(() => {
-    const th = TERMINAL_THEMES[resolvedTheme];
-    const style: Record<string, string> = {};
-    for (const [k, v] of Object.entries(th.surface)) {
-      // camelCase key -> kebab-case CSS variable (custom properties are case-sensitive)
-      const name = k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
-      style["--dmst-" + name] = v;
-    }
-    return style as React.CSSProperties;
-  }, [resolvedTheme]);
-
-  // Hot-swap every open xterm instance when the resolved theme changes
-  // (no reconnect, no reload).
-  React.useEffect(() => {
-    const th = TERMINAL_THEMES[resolvedTheme];
-    for (const term of termRegistry.values()) term.options.theme = th.xterm;
-  }, [resolvedTheme]);
-
-  return { override, cycleOverride, resolvedTheme, surfaceVars };
-}
-
-/**
- * The global Grid state: loaded once and kept in sync via /grid/events
- * pushes, plus an optimistic commit that reverts to the host's authoritative
- * state when the PUT fails (so a pin that did not stick visibly undoes
- * itself). `enabled` gates the subscription (the Focus View subscribes only
- * while visible).
- */
-
-
-
-/* ---------------- terminal window (frame-wide surface) ---------------- */
-
-const WIN_KEY = "dsh-ssh-hub.win";
-function loadWin() {
-  try {
-    const v = JSON.parse(localStorage.getItem(WIN_KEY) ?? "");
-    if (typeof v.x === "number" && typeof v.y === "number" && typeof v.w === "number" && typeof v.h === "number") {
-      return v;
-    }
-  } catch {
-    /* ignore */
-  }
-  return {
-    x: Math.max(0, Math.round((window.innerWidth - 780) / 2)),
-    y: Math.max(0, Math.round((window.innerHeight - 480) / 2)),
-    w: Math.min(780, window.innerWidth - 24),
-    h: Math.min(480, window.innerHeight - 24),
-  };
-}
-function saveWin(v: { x: number; y: number; w: number; h: number }) {
-  try {
-    localStorage.setItem(WIN_KEY, JSON.stringify(v));
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Wave-style widget picker on the window's right edge: servers to start a
- *  new session (auto-placed) and unplaced sessions to place back into the
- *  layout. Replaces the title-bar placement icons (spec #32). */
-function RightSidebar({
-  servers,
-  tabs,
-  collection,
-  onStart,
-  onPlace,
-  onKill,
-  onClose,
-}: {
-  servers: ServerView[];
-  tabs: TermTab[];
-  collection: any;
-  onStart: (s: ServerView) => void;
-  onPlace: (sessionId: string) => void;
-  onKill: (sessionId: string) => void;
-  onClose: () => void;
-}) {
-  const inTree = new Set(collectAllSessions(collection));
-  const unplaced = tabs.filter((t) => !inTree.has(t.id));
-  return (
-    <div className="dmsSidebar">
-      <div className="dmsSidebarHead">
-        <span>Widgets</span>
-        <button className="dmsSidebarClose" onClick={onClose} aria-label="关闭侧栏">
-          {Icon.close()}
-        </button>
-      </div>
-      <div className="dmsSidebarSection">
-        <div className="dmsSidebarTitle">服务器</div>
-        {servers.length === 0 ? (
-          <div className="dmsSidebarEmpty">先添加一台服务器</div>
-        ) : (
-          servers.map((s) => (
-            <button key={s.id} className="dmsSidebarRow" onClick={() => onStart(s)} title={s.username + "@" + s.host}>
-              <span className="dmsSidebarIcon">{Icon.terminal(13)}</span>
-              <span className="dmsSidebarLabel">{s.name}</span>
-            </button>
-          ))
-        )}
-      </div>
-      <div className="dmsSidebarSection">
-        <div className="dmsSidebarTitle">未放置会话</div>
-        {unplaced.length === 0 ? (
-          <div className="dmsSidebarEmpty">没有未放置的会话</div>
-        ) : (
-          unplaced.map((t) => (
-            <span key={t.id} className="dmsSidebarRow">
-              <span className={t.status === "live" ? "dmsListDot isLive" : "dmsListDot"} />
-              <button className="dmsSidebarLabel" onClick={() => onPlace(t.id)}>
-                {t.label}
-              </button>
-              <button className="dmsListKill" title="结束会话" aria-label="结束会话" onClick={() => onKill(t.id)}>
-                {Icon.close()}
-              </button>
-            </span>
-          ))
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -1754,32 +1458,13 @@ export function TerminalWindow() {
   const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
   const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
   const { collection, commit } = useWorkspaceState(visible);
-  const [magnifiedPath, setMagnifiedPath] = React.useState<number[] | null>(null);
   const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
-  /** The active (workspace, tab) tree and a commit that writes it back.
-   *  When a block is magnified, the rendered tree is that subtree and writes
-   *  land back at its path (splitting inside a magnified block mutates the
-   *  tree, per the Wave-aligned decision). */
-  const tree = activeTree(collection);
-  const renderTree = magnifiedPath !== null ? nodeAtPath(tree, magnifiedPath) ?? tree : tree;
-  const commitTree = React.useCallback(
-    (nextTree: any) => {
-      if (magnifiedPath !== null) {
-        commit(setActiveTree(collection, layoutReplaceAt(tree, magnifiedPath, nextTree)));
-      } else {
-        commit(setActiveTree(collection, nextTree));
-      }
-    },
-    [collection, commit, magnifiedPath, tree],
-  );
-  const toggleMagnify = (path: number[]) => {
-    setMagnifiedPath((cur) => {
-      const restoring = cur !== null && samePath(cur, path);
-      if (restoring) setActivePath(null); // subtree-relative path is stale in the main view
-      return restoring ? null : path;
-    });
-  };
+  /** The active item (tab = one session full-window; workspace = a flat group)
+   *  and a commit writing the collection back. */
+  const activeItem = collection.items[collection.activeIndex] ?? null;
+  /** Magnify: a workspace member fills the window (member index). */
+  const [magnifiedMember, setMagnifiedMember] = React.useState<number | null>(null);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
   const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
 
@@ -1788,14 +1473,12 @@ export function TerminalWindow() {
   const [defaults, setDefaults] = React.useState<ServerDefaults | null>(null);
   const [drawer, setDrawer] = React.useState(false);
   const [picker, setPicker] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [activePath, setActivePath] = React.useState<number[] | null>(null);
+  const [busy, setBusy] = useState(false);
   const [win, setWin] = React.useState(loadWin);
   const [size, setSize] = React.useState({ w: 0, h: 0 });
   const [focused, setFocused] = React.useState(true);
   const [opening, setOpening] = React.useState(false);
   const [closing, setClosing] = React.useState(false);
-  const [drag, setDrag] = React.useState<DragState | null>(null);
   const [moving, setMoving] = React.useState(false);
   const bodyRef = React.useRef<HTMLDivElement>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
@@ -1819,10 +1502,9 @@ export function TerminalWindow() {
             status: s.exited ? "closed" : "connecting",
           })),
         );
-        if (remote.length > 0 && activePath === null) {
-          // focus the first block holding a session, if any
-          const p = layoutFindArr(tree, remote[0].id);
-          if (p !== null) setActivePath(p);
+        if (remote.length > 0 && collection.items.length === 0) {
+          // no items yet: open the first session as its own tab
+          commit({ ...collection, items: [{ kind: "tab", sessionId: remote[0].id, name: remote[0].label }], activeIndex: 0 });
         }
       })
       .catch(() => {});
@@ -1884,31 +1566,7 @@ export function TerminalWindow() {
     };
   }, [visible]);
 
-  /* ---- block drag: swap (centre) or edge-split, RGB preview live ----
-   * Dragging out of the window cancels: the hover preview clears and a drop
-   * outside never commits. */
-  React.useEffect(() => {
-    if (drag === null) return;
-    const inWindow = (target: EventTarget | null) =>
-      rootRef.current !== null && target instanceof Node && rootRef.current.contains(target);
-    const move = (e: PointerEvent) => {
-      if (!inWindow(e.target)) {
-        if (drag.hover !== null) setDrag({ ...drag, hover: null });
-      }
-    };
-    const up = (e: PointerEvent) => {
-      if (drag !== null && drag.hover !== null && inWindow(e.target)) {
-        commitTree(layoutDropBlock(tree, drag.fromPath, drag.hover.path, drag.hover.zone));
-      }
-      setDrag(null);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-  }, [drag, tree, commitTree]);
+
 
   /* ---- keyboard: Esc (maximized then close), plus basic Wave bindings.
    * Hardcoded here; the full configurable preset lands in T4. ---- */
@@ -1916,16 +1574,9 @@ export function TerminalWindow() {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (magnifiedPath !== null) setMagnifiedPath(null);
+        if (magnifiedMember !== null) setMagnifiedMember(null);
         else if (getTerminalMaximized()) setTerminalMaximized(false);
         else setTerminalVisible(false);
-        return;
-      }
-      const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
-      if (alt && e.key.toLowerCase() === "m") {
-        e.preventDefault();
-        if (magnifiedPath !== null) setMagnifiedPath(null);
-        else if (activePath !== null) toggleMagnify(activePath);
         return;
       }
       // Configurable bindings (Wave preset by default); read fresh each
@@ -1937,53 +1588,35 @@ export function TerminalWindow() {
         newTab();
         return;
       }
-      if (match("closeTab")) {
+      if (match("closeTab") || match("closeBlock")) {
+        // both map to closing the active item (a tab or the focused member)
         e.preventDefault();
-        closeTabAt(collection.activeTab ?? 0);
-        return;
-      }
-      if (match("closeBlock")) {
-        e.preventDefault();
-        if (activePath !== null) removeBlockAt(activePath);
-        return;
-      }
-      if (match("splitH") || match("splitV")) {
-        e.preventDefault();
-        commitTree(layoutAutoPlace(renderTree, null));
+        closeTabAt(collection.activeIndex ?? 0);
         return;
       }
       if (match("magnify")) {
         e.preventDefault();
-        if (magnifiedPath !== null) setMagnifiedPath(null);
-        else if (activePath !== null) toggleMagnify(activePath);
+        if (magnifiedMember !== null) setMagnifiedMember(null);
+        else if (activeItem?.kind === "workspace") setMagnifiedMember(0);
         return;
       }
       if (e.key === "F2") {
         e.preventDefault();
-        setRenaming({ tab: collection.activeTab ?? 0, text: collection.tabs[collection.activeTab ?? 0]?.name ?? "" });
+        setRenaming({ tab: collection.activeIndex ?? 0, text: collection.items[collection.activeIndex ?? 0]?.name ?? "" });
         return;
       }
-      // Fixed Wave-style numeric bindings (not configurable — they are key
-      // sequences): Alt+1-9 switches tabs, Ctrl+Shift+1-9 jumps to a block.
+      // Fixed Wave-style numeric binding: Alt+1-9 switches items.
       if (!e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
         const target = Number(e.key) - 1;
-        if (target < collection.tabs.length) commit(setActiveTab(collection, target));
+        if (target < collection.items.length) commit(setActiveIndex(collection, target));
         return;
-      }
-      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
-        e.preventDefault();
-        const target = Number(e.key);
-        const entry = [...numberByPath.entries()].find(([, n]) => n === target);
-        if (entry !== undefined) {
-          setActivePath(entry[0].split(".").map(Number));
-        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, collection, tree, activePath]);
+  }, [visible, collection, activeItem, magnifiedMember]);
 
   /* ---- tab operations ---- */
   const newTab = () => {
@@ -1998,10 +1631,7 @@ export function TerminalWindow() {
     commit(renameTab(collection, tabIdx, name));
     setRenaming(null);
   };
-  const removeBlockAt = (path: number[]) => {
-    const [next] = layoutRemoveBlock(tree, path);
-    commitTree(next ?? newBlock(null));
-  };
+
 
   /* ---- window chrome: move (clamped) / resize / maximize ---- */
   const startMove = (e: React.PointerEvent) => {
@@ -2062,20 +1692,25 @@ export function TerminalWindow() {
 
   const toggleMax = () => setTerminalMaximized(!getTerminalMaximized());
 
-  /* ---- tree mutations ---- */
-  const focusBlock = (path: number[]) => setActivePath(path);
+
   const placeInto = (sessionId: string) => {
-    // put into the focused block if it is empty, else the first empty leaf,
-    // else the root (replacing whatever is there when the tree is a single
-    // occupied leaf would destroy it — so replace the focused block instead).
-    let target = activePath;
-    if (target !== null && nodeAtPath(tree, target)?.sessionId !== null) target = null;
-    if (target === null) target = findEmptyLeaf(tree);
-    if (target !== null) {
-      commitTree(layoutSetSession(tree, target, sessionId));
+    // Put the session into the active item: an empty tab takes it; a
+    // workspace appends it; otherwise a new tab. A busy tab spawns a new tab.
+    const it = activeItem;
+    const tab = tabs.find((t) => t.id === sessionId);
+    const name = tab?.label ?? sessionId;
+    let next = collection;
+    if (it !== null && it.kind === "tab" && it.sessionId === null) {
+      const items = collection.items.map((x, i) => (i === collection.activeIndex ? { ...x, sessionId, name } : x));
+      next = { ...collection, items };
+    } else if (it !== null && it.kind === "workspace") {
+      next = addMember(collection, collection.activeIndex, { sessionId, name });
     } else {
-      commitTree(layoutAutoPlace(tree, sessionId));
+      next = addTab(collection);
+      const items = next.items.map((x, i) => (i === next.items.length - 1 ? { ...x, sessionId, name } : x));
+      next = { ...next, items };
     }
+    commitItems(next);
     setSidebarOpen(false);
   };
   const connectTo = async (s: ServerView) => {
@@ -2086,9 +1721,9 @@ export function TerminalWindow() {
       const tab: TermTab = { id: body.id, serverId: s.id, label: s.name || `${s.username}@${s.host}`, status: "connecting" };
       setTabs((prev) => [...prev, tab]);
       // open it in the focused block (or the first empty leaf / a new right split)
-      const target = findEmptyLeaf(tree);
-      if (target !== null) commitTree(layoutSetSession(tree, target, body.id));
-      else commitTree(layoutAutoPlace(tree, body.id));
+      const next = addTab(collection);
+      const items = next.items.map((x, i) => (i === next.items.length - 1 ? { ...x, sessionId: body.id, name: tab.label } : x));
+      commitItems({ ...next, items, activeIndex: next.items.length - 1 });
     } catch (e) {
       window.alert("连接失败：" + String(e instanceof Error ? e.message : e));
     } finally {
@@ -2125,20 +1760,6 @@ export function TerminalWindow() {
     }
   };
 
-  /* block numbers for Ctrl+Shift+N navigation hint */
-  const numberByPath = React.useMemo(() => {
-    const m = new Map<string, number>();
-    let n = 1;
-    const walk = (node: any, path: number[]) => {
-      if (node.kind === "block") m.set(path.join("."), n++);
-      else {
-        node.children.forEach((c, i) => walk(c, [...path, i]));
-      }
-    };
-    walk(tree, []);
-    return m;
-  }, [tree]);
-
   if (!visible && !closing) return null;
 
   const placedCount = collectAllSessions(collection).length;
@@ -2160,11 +1781,11 @@ export function TerminalWindow() {
     >
       <div className="dmsWinTabs" onPointerDown={startMove}>
         <div className="dmsTabList" role="tablist">
-          {collection.tabs.map((t, i) => (
+          {collection.items.map((it, i) => (
             <span
               key={i}
-              className={"dmsTab" + (i === collection.activeTab ? " isActive" : "")}
-              onDoubleClick={() => setRenaming({ tab: i, text: t.name })}
+              className={"dmsTab" + (i === collection.activeIndex ? " isActive" : "") + (it.kind === "workspace" ? " isGroup" : "")}
+              onDoubleClick={() => setRenaming({ tab: i, text: it.name })}
             >
               {renaming !== null && renaming.tab === i ? (
                 <input
@@ -2173,7 +1794,7 @@ export function TerminalWindow() {
                   value={renaming.text}
                   onChange={(e) => setRenaming({ ...renaming, text: e.target.value })}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") doRenameTab(i, renaming.text.trim() || t.name);
+                    if (e.key === "Enter") doRenameTab(i, renaming.text.trim() || it.name);
                     if (e.key === "Escape") setRenaming(null);
                   }}
                   onClick={(e) => e.stopPropagation()}
@@ -2182,16 +1803,16 @@ export function TerminalWindow() {
                 <button
                   className="dmsTabName"
                   role="tab"
-                  aria-selected={i === collection.activeTab}
-                  onClick={() => commit(setActiveTab(collection, i))}
+                  aria-selected={i === collection.activeIndex}
+                  onClick={() => commit(setActiveIndex(collection, i))}
                 >
-                  {t.name}
+                  {it.kind === "workspace" ? `${it.name} · ${it.members.length}` : it.name}
                 </button>
               )}
               <button
                 className="dmsTabX"
-                title="关闭标签页（Alt+Shift+w）"
-                aria-label="关闭标签页"
+                title={it.kind === "workspace" ? "解散组合（会话回到清单）" : "关闭标签页（Alt+Shift+w）"}
+                aria-label={it.kind === "workspace" ? "解散组合" : "关闭标签页"}
                 onClick={(e) => {
                   e.stopPropagation();
                   closeTabAt(i);
@@ -2224,26 +1845,16 @@ export function TerminalWindow() {
         </span>
       </div>
       <div className="dmsWinBody" ref={bodyRef} data-term-theme={resolvedTheme} style={surfaceVars}>
-        <SplitTreeView
-          node={renderTree}
-          path={[]}
-          tree={renderTree}
-          commitTree={commitTree}
+        <ItemsView
+          collection={collection}
           tabs={tabs}
-          activePath={activePath}
-          onFocusBlock={focusBlock}
+          magnifiedMember={magnifiedMember}
+          onMagnifyMember={setMagnifiedMember}
           onStatus={(tabId, patch) => setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))}
-          onEmptyClick={(path) => {
-            setActivePath(path);
-            setSidebarOpen(true);
-          }}
-          numberByPath={numberByPath}
-          blockSize={{ w: size.w, h: size.h }}
-          drag={drag}
-          onDrag={setDrag}
-          onMagnify={toggleMagnify}
-          isMagnified={magnifiedPath !== null}
-          dir="row"
+          onCommit={commitItems}
+          onCloseItem={closeTabAt}
+          onPlace={placeInto}
+          openSidebar={() => setSidebarOpen(true)}
         />
         {picker && (
           <ServerPicker servers={servers} busy={busy} onPick={connectTo} onManage={() => setDrawer(true)} onClose={() => setPicker(false)} />
@@ -2277,19 +1888,6 @@ export function TerminalWindow() {
   );
 }
 
-function findEmptyLeaf(tree: any): number[] | null {
-  let found: number[] | null = null;
-  const walk = (node: any, path: number[]) => {
-    if (found !== null) return;
-    if (node.kind === "block") {
-      if (node.sessionId === null) found = [...path];
-      return;
-    }
-    node.children.forEach((c, i) => walk(c, [...path, i]));
-  };
-  walk(tree, []);
-  return found;
-}
 
 /* ---------------- sidebar entry (sidebar.footer.action) ---------------- */
 
