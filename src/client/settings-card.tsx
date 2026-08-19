@@ -13,6 +13,13 @@
  * default (see getSettingsScope in #15).
  */
 import React from "react";
+import {
+  parseBinding,
+  KNOWN_DSH_KEYS,
+  loadKeys,
+  saveKeys,
+  DEFAULT_KEYS,
+} from "../shared/keybind.mjs";
 
 /* ---------------- bound settings scope (injected by the wrapper) -------- */
 
@@ -117,6 +124,10 @@ if (typeof document !== "undefined" && document.getElementById(STYLE_TAG) === nu
 .dmscBtn:disabled{opacity:.4;cursor:default}
 .dmscBtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
 .dmscManage{margin-right:auto}
+.dmscKeyRow{flex-direction:column;gap:6px;padding:8px 0 4px;display:flex}
+.dmscKeyLine{display:flex;align-items:center;gap:8px}
+.dmscKeyLabel{flex:none;min-width:110px;color:var(--dsw-alias-label-secondary);font-size:12.5px}
+.dmscKeyInput{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 `;
   document.head.appendChild(style);
 }
@@ -126,6 +137,60 @@ if (typeof document !== "undefined" && document.getElementById(STYLE_TAG) === nu
 type Stage = { kind: "edit"; text: string } | { kind: "clear" };
 
 const EMPTY_SNAPSHOT: SettingsScopeSnapshot = { status: "unavailable" };
+
+/** One configurable shortcut: local draft, validation, conflict warning. */
+function KeyBindingRow({ label, action, hint }: { label: string; action: string; hint: string }) {
+  const [text, setText] = React.useState<string>(() => (loadKeys()[action] ?? DEFAULT_KEYS[action] ?? ""));
+  const [saved, setSaved] = React.useState(false);
+  const parsed = parseBinding(text);
+  const conflict =
+    parsed !== null &&
+    (KNOWN_DSH_KEYS.some(
+      (k) =>
+        k.toLowerCase().replace(/\s/g, "") ===
+        text.toLowerCase().replace(/\s/g, ""),
+    ) ||
+      false);
+  const save = () => {
+    if (parsed === null) return;
+    const keys = loadKeys();
+    keys[action] = text;
+    if (saveKeys(keys)) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    }
+  };
+  return (
+    <div className="dmscKeyRow">
+      <div className="dmscKeyLine">
+        <span className="dmscKeyLabel">{label}</span>
+        <input
+          className={"dmscInput dmscKeyInput" + (parsed === null ? " dmscInputInvalid" : "")}
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          spellCheck={false}
+          aria-label={label}
+        />
+        <button
+          type="button"
+          className="dmscBtn dmscBtnDiscard"
+          onClick={save}
+          disabled={parsed === null}
+        >
+          {saved ? "已保存" : "保存"}
+        </button>
+      </div>
+      {parsed === null ? (
+        <p className="dmscErr">格式应为 修饰键+键位，如 Ctrl+Shift+Backquote，且至少一个修饰键。</p>
+      ) : conflict ? (
+        <p className="dmscErr">与 DSH 自带快捷键接近，可能冲突（不阻止保存）。</p>
+      ) : (
+        <p className="dmscHint">{hint}</p>
+      )}
+    </div>
+  );
+}
 
 export function SettingsCard() {
   const scope = boundScope;
@@ -361,6 +426,22 @@ export function SettingsCard() {
           </select>
           <p className="dmscHint">{FIELD_HINTS.defaultTerminalTheme}</p>
         </div>
+      </div>
+
+      <div className="dmscField">
+        <div className="dmscHead">
+          <div className="dmscLabel">快捷键（浏览器本地，立即生效）</div>
+        </div>
+        <KeyBindingRow
+          label="开关终端窗口"
+          action="toggleWindow"
+          hint="例如 Ctrl+Shift+`（输入时用 + 连接修饰键与键位）"
+        />
+        <KeyBindingRow
+          label="最大化 / 还原"
+          action="maximizeWindow"
+          hint="例如 Ctrl+Alt+`；Esc 在窗口内另有行为"
+        />
       </div>
 
       <div className="dmscFoot">
