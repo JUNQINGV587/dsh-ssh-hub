@@ -13,7 +13,11 @@
  * — bindings are not duplicated. The module is DOM-free and doubles as the
  * wire schema for GET/PUT /ssh-hub/workspace and /workspace/events pushes.
  */
-import { newTree, normalizeTree } from "./splittree.mjs";
+import { newBlock, normalizeTree } from "./layout.mjs";
+/** A single empty block, as the layout module's initial tree. */
+export function newTree() {
+  return newBlock(null);
+}
 
 /**
  * @typedef {Object} TabState
@@ -52,7 +56,13 @@ export function defaultCollection() {
 
 function normalizeTab(input) {
   const name = typeof input?.name === "string" && input.name.length > 0 ? input.name : DEFAULT_TAB;
-  return { name, tree: normalizeTree(input?.tree) };
+  // Legacy binary SplitTree nodes (kind "split") reset to an empty block —
+  // the n-tree engine supersedes them (spec #32 / ADR-0008).
+  const tree =
+    input?.tree !== null && typeof input?.tree === "object" && input.tree.kind === "split"
+      ? newBlock(null)
+      : normalizeTree(input?.tree);
+  return { name, tree };
 }
 
 function normalizeWorkspace(input) {
@@ -201,12 +211,11 @@ export function collectSessions(collection) {
   for (const w of collection.workspaces) {
     for (const t of w.tabs) {
       const walk = (node) => {
-        if (node.kind === "leaf") {
+        if (node.kind === "block") {
           if (node.sessionId !== null) out.push(node.sessionId);
           return;
         }
-        walk(node.a);
-        walk(node.b);
+        for (const c of node.children) walk(c);
       };
       walk(t.tree);
     }
@@ -217,17 +226,17 @@ export function collectSessions(collection) {
 /* ---------------- internals ---------------- */
 
 function clearSessions(tree) {
-  if (tree.kind === "leaf") return { kind: "leaf", sessionId: null };
-  return { ...tree, a: clearSessions(tree.a), b: clearSessions(tree.b) };
+  if (tree.kind === "block") return { kind: "block", sessionId: null };
+  return { ...tree, children: tree.children.map(clearSessions) };
 }
 
 function clearSession(tree, sessionId, onChanged) {
-  if (tree.kind === "leaf") {
+  if (tree.kind === "block") {
     if (tree.sessionId === sessionId) {
       onChanged();
-      return { kind: "leaf", sessionId: null };
+      return { kind: "block", sessionId: null };
     }
     return tree;
   }
-  return { ...tree, a: clearSession(tree.a, sessionId, onChanged), b: clearSession(tree.b, sessionId, onChanged) };
+  return { ...tree, children: tree.children.map((c) => clearSession(c, sessionId, onChanged)) };
 }

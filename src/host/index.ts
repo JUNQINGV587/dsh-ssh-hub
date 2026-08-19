@@ -151,12 +151,12 @@ export function apply(ctx: any, config: any) {
   function sanitizeWorkspaces(input: any) {
     const collection = normalizeCollection(input);
     const walk = (node: any): any => {
-      if (node.kind === "leaf") {
+      if (node.kind === "block") {
         const sessionId =
           node.sessionId !== null && registry.get(node.sessionId) === undefined ? null : node.sessionId;
-        return { kind: "leaf", sessionId };
+        return { kind: "block", sessionId };
       }
-      return { kind: "split", dir: node.dir, ratio: node.ratio, a: walk(node.a), b: walk(node.b) };
+      return { ...node, children: (node.children ?? []).map(walk) };
     };
     return {
       workspaces: collection.workspaces.map((w: any) => ({

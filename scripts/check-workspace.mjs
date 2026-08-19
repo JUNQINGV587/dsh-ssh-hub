@@ -26,7 +26,8 @@ import {
   emptySessionFromAll,
   collectSessions,
 } from "../src/shared/workspace.mjs";
-import { newTree, split as treeSplit } from "../src/shared/splittree.mjs";
+import { newTree } from "../src/shared/workspace.mjs";
+import { listOf } from "../src/shared/layout.mjs";
 
 let failures = 0;
 function check(name, cond, extra = "") {
@@ -43,7 +44,7 @@ console.log("=======================");
 console.log("1. default collection");
 const d0 = defaultCollection();
 check("default has one workspace", d0.workspaces.length === 1);
-check("workspace has one empty-block tab", d0.workspaces[0].tabs.length === 1 && d0.workspaces[0].tabs[0].tree.kind === "leaf" && d0.workspaces[0].tabs[0].tree.sessionId === null);
+check("workspace has one empty-block tab", d0.workspaces[0].tabs.length === 1 && d0.workspaces[0].tabs[0].tree.kind === "block" && d0.workspaces[0].tabs[0].tree.sessionId === null);
 check("activeWorkspace = 0 and activeTab = 0", d0.activeWorkspace === 0 && d0.workspaces[0].activeTab === 0);
 check("default names", d0.workspaces[0].name.length > 0 && d0.workspaces[0].tabs[0].name.length > 0);
 
@@ -51,7 +52,7 @@ console.log("2. normalize repairs garbage");
 const g0 = normalizeCollection(null);
 check("null -> default collection", g0.workspaces.length === 1);
 const g1 = normalizeCollection({ workspaces: [{ name: "W", icon: "i", color: "red", tabs: [{ name: "T", tree: { kind: "split", dir: "x", ratio: 9, a: { kind: "leaf", sessionId: 42 }, b: null } }], activeTab: 5 }], activeWorkspace: 3 });
-check("bad dir/ratio/session repaired via splittree", g1.workspaces[0].tabs[0].tree.dir === "h" && g1.workspaces[0].tabs[0].tree.ratio >= 0.15 && g1.workspaces[0].tabs[0].tree.a.sessionId === null && g1.workspaces[0].tabs[0].tree.b.sessionId === null);
+check("legacy split tree resets to an empty block (migration)", g1.workspaces[0].tabs[0].tree.kind === "block" && g1.workspaces[0].tabs[0].tree.sessionId === null, JSON.stringify(g1.workspaces[0].tabs[0].tree));
 check("activeTab clamped into range", g1.workspaces[0].activeTab === 0);
 check("activeWorkspace clamped into range", g1.activeWorkspace === 0);
 const g2 = normalizeCollection({ workspaces: [], activeWorkspace: 0 });
@@ -74,31 +75,31 @@ check("icon + color meta", c6.workspaces[0].icon === "server" && c6.workspaces[0
 console.log("4. layout copy copies structure, not bindings");
 const base = defaultCollection();
 const withSplit = JSON.parse(JSON.stringify(base));
-withSplit.workspaces[0].tabs[0].tree = treeSplit(newTree("A"), [], "h", "B", false);
+withSplit.workspaces[0].tabs[0].tree = listOf("row", [{ kind: "block", sessionId: "A" }, { kind: "block", sessionId: "B" }]);
 const cp = createWorkspace(withSplit, { name: "副本", copyFrom: 0 });
-check("copy keeps the split structure", cp.workspaces[1].tabs[0].tree.kind === "split" && cp.workspaces[1].tabs[0].tree.a.sessionId === null && cp.workspaces[1].tabs[0].tree.b.sessionId === null);
+check("copy keeps the list structure", cp.workspaces[1].tabs[0].tree.kind === "list" && cp.workspaces[1].tabs[0].tree.dir === "row" && cp.workspaces[1].tabs[0].tree.children[0].sessionId === null && cp.workspaces[1].tabs[0].tree.children[1].sessionId === null);
 check("copy does not duplicate session bindings", collectSessions(cp).join(",") === "A,B", collectSessions(cp).join(","));
 
 console.log("5. tab CRUD + active memory");
 const t1 = addTab(d0, 0);
-check("addTab appends a single empty-block tab", t1.workspaces[0].tabs.length === 2 && t1.workspaces[0].tabs[1].tree.kind === "leaf");
+check("addTab appends a single empty-block tab", t1.workspaces[0].tabs.length === 2 && t1.workspaces[0].tabs[1].tree.kind === "block");
 const t2 = setActiveTab(t1, 0, 1);
 check("setActiveTab", t2.workspaces[0].activeTab === 1);
 const t3 = renameTab(t2, 0, 1, "部署");
 check("renameTab", t3.workspaces[0].tabs[1].name === "部署");
 const [t4, removedTree] = removeTab(t3, 0, 1);
-check("removeTab returns the removed tab", t4.workspaces[0].tabs.length === 1 && removedTree.kind === "leaf");
+check("removeTab returns the removed tab", t4.workspaces[0].tabs.length === 1 && removedTree.kind === "block");
 const t5 = setActiveWorkspace(d0, 0);
 check("setActiveWorkspace", t5.activeWorkspace === 0);
-check("activeTree returns the active tab's tree", activeTree(d0).kind === "leaf" && activeTree(d0).sessionId === null);
-const st = setActiveTree(d0, { kind: "leaf", sessionId: "S" });
+check("activeTree returns the active tab's tree", activeTree(d0).kind === "block" && activeTree(d0).sessionId === null);
+const st = setActiveTree(d0, { kind: "block", sessionId: "S" });
 check("setActiveTree replaces the active tab's tree", activeTree(st).sessionId === "S" && st.workspaces[0].tabs[0].tree.sessionId === "S");
 
 console.log("6. session cleanup is global across workspaces and tabs");
 const multi = normalizeCollection({
   workspaces: [
-    { name: "W1", icon: null, color: null, tabs: [{ name: "a", tree: { kind: "leaf", sessionId: "S1" } }, { name: "b", tree: treeSplit(newTree("S2"), [], "h", "S1", false) }], activeTab: 0 },
-    { name: "W2", icon: null, color: null, tabs: [{ name: "c", tree: { kind: "leaf", sessionId: "S1" } }], activeTab: 0 },
+    { name: "W1", icon: null, color: null, tabs: [{ name: "a", tree: { kind: "block", sessionId: "S1" } }, { name: "b", tree: listOf("row", [{ kind: "block", sessionId: "S2" }, { kind: "block", sessionId: "S1" }]) }], activeTab: 0 },
+    { name: "W2", icon: null, color: null, tabs: [{ name: "c", tree: { kind: "block", sessionId: "S1" } }], activeTab: 0 },
   ],
   activeWorkspace: 0,
 });
