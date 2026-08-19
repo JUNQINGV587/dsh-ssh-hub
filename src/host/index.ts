@@ -18,9 +18,9 @@
  *   POST   /ssh-hub/sessions             open a shell on a server
  *   DELETE /ssh-hub/sessions/:id         close a session
  *   WS     /ssh-hub/ws/:id               terminal stream (data + resize)
- *   GET    /ssh-hub/tree                current global workspace tree
- *   PUT    /ssh-hub/tree                replace the tree (validated)
- *   WS     /ssh-hub/tree/events         tree pushes (initial + broadcast)
+ *   GET    /ssh-hub/workspace           current workspace collection
+ *   PUT    /ssh-hub/workspace           replace the collection (validated)
+ *   WS     /ssh-hub/workspace/events    collection pushes (initial + broadcast)
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -30,7 +30,7 @@ import type { ServerConfig, ServerDefaults, TerminalSession, TestResult } from "
 import { ServerStore, resolveDshHome, serverFromInput, SECRET_FIELDS, type ServerInput } from "./store.js";
 import { testConnection, createShellSession } from "./connection.js";
 import { SessionRegistry } from "./registry.js";
-import { newTree, normalizeTree, collectSessions } from "../shared/splittree.mjs";
+import { defaultCollection, normalizeCollection, emptySessionFromAll } from "../shared/workspace.mjs";
 
 const PREFIX = "/ssh-hub";
 /** Default idle reclaim for a session with no attached clients (ADR-0004). */
@@ -140,17 +140,16 @@ export function apply(ctx: any, config: any) {
   /** id -> per-session WS upgrade route disposer */
   const upgradeDisposers = new Map<string, () => void>();
 
-  /* ---- global SplitTree state (ADR-0006) ---- */
-  /** One global workspace tree: window and full-screen are two viewports. */
-  let treeState: any = newTree(null);
-  /** Clients subscribed to tree/events. */
-  const treeClients = new Set<WebSocket>();
+  /* ---- global workspace collection state (ADR-0007) ---- */
+  /** The three-layer layout state: workspaces of tabs of split trees. */
+  let workspaceState: any = defaultCollection();
+  /** Clients subscribed to workspace/events. */
+  const workspaceClients = new Set<WebSocket>();
 
-  /** Validate a client-supplied tree; dead-session leaves are emptied (the
-   *  host is authoritative — a leaf pointing at a gone session is garbage). */
-  function sanitizeTree(input: any) {
-    const tree = normalizeTree(input);
-    // collect leaves and clear those whose session is unknown
+  /** Validate a client-supplied collection; leaves pointing at unknown
+   *  sessions are emptied (the host is authoritative). */
+  function sanitizeWorkspaces(input: any) {
+    const collection = normalizeCollection(input);
     const walk = (node: any): any => {
       if (node.kind === "leaf") {
         const sessionId =
@@ -159,38 +158,37 @@ export function apply(ctx: any, config: any) {
       }
       return { kind: "split", dir: node.dir, ratio: node.ratio, a: walk(node.a), b: walk(node.b) };
     };
-    return walk(tree);
+    return {
+      workspaces: collection.workspaces.map((w: any) => ({
+        ...w,
+        tabs: w.tabs.map((t: any) => ({ ...t, tree: walk(t.tree) })),
+      })),
+      activeWorkspace: collection.activeWorkspace,
+    };
   }
 
-  function broadcastTree() {
-    const payload = JSON.stringify(treeState);
-    for (const ws of treeClients) {
+  function broadcastWorkspaces() {
+    const payload = JSON.stringify(workspaceState);
+    for (const ws of workspaceClients) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
     }
   }
 
-  /** A session left the registry: empty its leaves and tell every surface. */
-  function clearSessionFromTree(id: string) {
-    const walk = (node: any): any => {
-      if (node.kind === "leaf") {
-        if (node.sessionId === id) return { kind: "leaf", sessionId: null };
-        return node;
-      }
-      return { ...node, a: walk(node.a), b: walk(node.b) };
-    };
-    const next = walk(treeState);
-    if (JSON.stringify(next) !== JSON.stringify(treeState)) {
-      treeState = next;
-      broadcastTree();
+  /** A session left the registry: empty its leaves everywhere and broadcast. */
+  function clearSessionFromWorkspaces(id: string) {
+    const next = emptySessionFromAll(workspaceState, id);
+    if (next !== workspaceState) {
+      workspaceState = next;
+      broadcastWorkspaces();
     }
   }
 
   // Reclaim disposes the session's WS upgrade route along with the session,
-  // and empties any tree leaves pointing at it (the block stays).
+  // and empties any leaves pointing at it (the blocks stay).
   registry.onReclaim((id) => {
     upgradeDisposers.get(id)?.();
     upgradeDisposers.delete(id);
-    clearSessionFromTree(id);
+    clearSessionFromWorkspaces(id);
   });
 
   /** Unpredictable session id: readable counter prefix + crypto-random suffix. */
@@ -311,10 +309,10 @@ export function apply(ctx: any, config: any) {
     );
   }
 
-  /** Tree-state event channel: every surface subscribes and converges on the
-   *  broadcast workspace tree (ADR-0006). */
-  const treeEventsDispose = webServer.registerUpgrade({
-    path: PREFIX + "/tree/events",
+  /** Workspace-state event channel: every surface subscribes and converges
+   *  on the broadcast collection (ADR-0007). */
+  const workspaceEventsDispose = webServer.registerUpgrade({
+    path: PREFIX + "/workspace/events",
     handler(req: any, socket: any, head: Buffer) {
       if (!sameOrigin(req)) {
         socket.destroy();
@@ -322,14 +320,14 @@ export function apply(ctx: any, config: any) {
       }
       const wss = new WebSocketServer({ noServer: true });
       wss.on("connection", (ws) => {
-        treeClients.add(ws);
+        workspaceClients.add(ws);
         // Defer the initial state like the session replay: frames written
         // synchronously inside the connection event are dropped by ws.
         setImmediate(() => {
-          if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(treeState));
+          if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(workspaceState));
         });
         ws.on("close", () => {
-          treeClients.delete(ws);
+          workspaceClients.delete(ws);
         });
       });
       wss.on("error", () => socket.destroy());
@@ -496,17 +494,17 @@ export function apply(ctx: any, config: any) {
           return;
         }
 
-        // ---- global SplitTree state (ADR-0006) ----
-        if (rest === "/tree" && method === "GET") {
-          json(res, 200, { tree: treeState });
+        // ---- global workspace collection (ADR-0007) ----
+        if (rest === "/workspace" && method === "GET") {
+          json(res, 200, { workspace: workspaceState });
           return;
         }
-        if (rest === "/tree" && method === "PUT") {
+        if (rest === "/workspace" && method === "PUT") {
           const body = await readBody(req);
-          const clean = sanitizeTree(body);
-          treeState = clean;
-          broadcastTree();
-          json(res, 200, { tree: treeState });
+          const clean = sanitizeWorkspaces(body);
+          workspaceState = clean;
+          broadcastWorkspaces();
+          json(res, 200, { workspace: workspaceState });
           return;
         }
 
@@ -571,15 +569,15 @@ export function apply(ctx: any, config: any) {
   ctx.effect(() => {
     return () => {
       disposeRoute();
-      treeEventsDispose();
-      for (const ws of treeClients) {
+      workspaceEventsDispose();
+      for (const ws of workspaceClients) {
         try {
           ws.close();
         } catch {
           /* ignore */
         }
       }
-      treeClients.clear();
+      workspaceClients.clear();
       // clearAll kills and forgets every session; forget() disposes the
       // per-session upgrade routes through the reclaim hook.
       registry.clearAll();

@@ -550,42 +550,51 @@ check("explicitly closed session gone", !afterDel.body?.sessions?.some((s) => s.
 const delAgain = await req(`/ssh-hub/sessions/${sessionId2}`, "DELETE");
 check("DELETE missing -> 404", delAgain.status === 404);
 
-console.log("4d. global workspace tree (ADR-0006)");
-const tree0 = await req("/ssh-hub/tree");
+console.log("4d. workspace collection (ADR-0007)");
+const ws0 = await req("/ssh-hub/workspace");
 check(
-  "GET /tree starts as one empty leaf",
-  tree0.body?.tree?.kind === "leaf" && tree0.body?.tree?.sessionId === null,
-  JSON.stringify(tree0.body),
+  "GET /workspace starts with one workspace and one empty-block tab",
+  ws0.body?.workspace?.workspaces?.length === 1 &&
+    ws0.body?.workspace?.workspaces?.[0]?.tabs?.length === 1 &&
+    ws0.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.kind === "leaf" &&
+    ws0.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.sessionId === null,
+  JSON.stringify(ws0.body),
 );
 
 const gsess = await req("/ssh-hub/sessions", "POST", { serverId, cols: 80, rows: 24 });
 const gsid = gsess.body?.id;
-check("tree fixture session opened", typeof gsid === "string");
+check("workspace fixture session opened", typeof gsid === "string");
 
-// PUT a horizontal split: A left, empty block right.
+// PUT a collection: workspace with a split tab holding A and an empty block.
 const splitTree = { kind: "split", dir: "h", ratio: 0.5, a: { kind: "leaf", sessionId: gsid }, b: { kind: "leaf", sessionId: null } };
-const tp = await req("/ssh-hub/tree", "PUT", splitTree);
+const coll = {
+  workspaces: [{ name: "W", icon: null, color: null, tabs: [{ name: "T", tree: splitTree }], activeTab: 0 }],
+  activeWorkspace: 0,
+};
+const tp = await req("/ssh-hub/workspace", "PUT", coll);
 check(
-  "PUT /tree saves the split tree",
-  tp.body?.tree?.kind === "split" && tp.body?.tree?.dir === "h" && tp.body?.tree?.a?.sessionId === gsid && tp.body?.tree?.b?.sessionId === null,
+  "PUT /workspace saves the collection",
+  tp.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.kind === "split" && tp.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.a?.sessionId === gsid,
   JSON.stringify(tp.body),
 );
-const tree1 = await req("/ssh-hub/tree");
-check("GET /tree returns saved state", tree1.body?.tree?.kind === "split" && tree1.body?.tree?.a?.sessionId === gsid, JSON.stringify(tree1.body));
+const ws1 = await req("/ssh-hub/workspace");
+check("GET /workspace returns saved state", ws1.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.a?.sessionId === gsid, JSON.stringify(ws1.body));
 
-// Unknown sessions in leaves are emptied (host authoritative), and garbage
-// shapes are repaired rather than rejected.
-const gdead = await req("/ssh-hub/tree", "PUT", { kind: "split", dir: "h", ratio: 0.5, a: { kind: "leaf", sessionId: "ghost-session" }, b: { kind: "leaf", sessionId: gsid } });
-check("PUT /tree empties unknown session leaves", gdead.body?.tree?.a?.sessionId === null && gdead.body?.tree?.b?.sessionId === gsid, JSON.stringify(gdead.body));
-const gbad = await req("/ssh-hub/tree", "PUT", { kind: "banana" });
-check("PUT /tree repairs garbage into an empty leaf", gbad.status === 200 && gbad.body?.tree?.kind === "leaf" && gbad.body?.tree?.sessionId === null, JSON.stringify(gbad.body));
+// Unknown sessions in leaves are emptied; garbage shapes repaired.
+const gdead = await req("/ssh-hub/workspace", "PUT", {
+  workspaces: [{ name: "W", icon: null, color: null, tabs: [{ name: "T", tree: { kind: "split", dir: "h", ratio: 0.5, a: { kind: "leaf", sessionId: "ghost" }, b: { kind: "leaf", sessionId: gsid } } }], activeTab: 0 }],
+  activeWorkspace: 0,
+});
+check("PUT /workspace empties unknown session leaves", gdead.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.a?.sessionId === null && gdead.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.b?.sessionId === gsid, JSON.stringify(gdead.body));
+const gbad = await req("/ssh-hub/workspace", "PUT", { banana: true });
+check("PUT /workspace repairs garbage to a default collection", gbad.status === 200 && gbad.body?.workspace?.workspaces?.length === 1 && gbad.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.kind === "leaf", JSON.stringify(gbad.body));
 
 // ws broadcast: connect, then PUT, expect the new state pushed.
-const gws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/tree/events`);
-const treeEvents = [];
-gws.on("message", (d) => treeEvents.push(JSON.parse(String(d))));
+const gws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ssh-hub/workspace/events`);
+const wsEvents = [];
+gws.on("message", (d) => wsEvents.push(JSON.parse(String(d))));
 await new Promise((res, rej) => {
-  const t = setTimeout(() => rej(new Error("tree ws open timeout")), 5000);
+  const t = setTimeout(() => rej(new Error("workspace ws open timeout")), 5000);
   gws.on("open", () => {
     clearTimeout(t);
     res();
@@ -596,17 +605,23 @@ await new Promise((res, rej) => {
   });
 });
 await new Promise((r) => setTimeout(r, 300));
-check("tree ws receives initial state", treeEvents.length >= 1 && treeEvents[0]?.kind === "leaf" && treeEvents[0]?.sessionId === null, JSON.stringify(treeEvents));
-await req("/ssh-hub/tree", "PUT", { kind: "leaf", sessionId: gsid });
+// The initial frame reflects the last PUT (garbage repair reset to default).
+check("workspace ws receives initial state", wsEvents.length >= 1 && wsEvents[0]?.workspaces?.[0]?.tabs?.[0]?.tree?.sessionId === null, JSON.stringify(wsEvents));
+const coll2 = { ...coll, workspaces: [{ ...coll.workspaces[0], tabs: [{ name: "T", tree: { kind: "leaf", sessionId: gsid } }] }] };
+await req("/ssh-hub/workspace", "PUT", coll2);
 await new Promise((r) => setTimeout(r, 300));
-check("tree ws receives broadcast after PUT", treeEvents.some((e) => e?.sessionId === gsid), JSON.stringify(treeEvents));
+check("workspace ws receives broadcast after PUT", wsEvents.some((e) => e?.workspaces?.[0]?.tabs?.[0]?.tree?.kind === "leaf" && e?.workspaces?.[0]?.tabs?.[0]?.tree?.sessionId === gsid), JSON.stringify(wsEvents));
 gws.close();
 
-// Killing the session empties its leaf (the block stays) via the reclaim hook.
+// Migration: the old single-tree endpoints are gone.
+const mig = await req("/ssh-hub/tree");
+check("old /tree returns 404 (migration)", mig.status === 404);
+
+// Killing the session empties its leaves (blocks stay) via the reclaim hook.
 const gdel = await req(`/ssh-hub/sessions/${gsid}`, "DELETE");
-check("tree fixture session deleted", gdel.body?.ok === true);
-const g2 = await req("/ssh-hub/tree");
-check("deleting a session empties its leaf", g2.body?.tree?.kind === "leaf" && g2.body?.tree?.sessionId === null, JSON.stringify(g2.body));
+check("workspace fixture session deleted", gdel.body?.ok === true);
+const g2 = await req("/ssh-hub/workspace");
+check("deleting a session empties its leaves", g2.body?.workspace?.workspaces?.[0]?.tabs?.[0]?.tree?.sessionId === null, JSON.stringify(g2.body));
 
 console.log("4e. unattached sessions are reclaimed too");
 // A session that never had a WebSocket attached must still hit the idle
