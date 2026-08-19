@@ -1739,7 +1739,7 @@ function RightSidebar({
   onKill: (sessionId: string) => void;
   onClose: () => void;
 }) {
-  const inTree = new Set(collectLayoutSessions(collection));
+  const inTree = new Set(collectAllSessions(collection));
   const unplaced = tabs.filter((t) => !inTree.has(t.id));
   return (
     <div className="dmsSidebar">
