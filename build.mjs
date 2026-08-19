@@ -78,6 +78,8 @@ const factoryBody = [
   "var __sidebarEntry = __mod.SidebarEntry;",
   "var __settingsCard = __mod.SettingsCard;",
   "var __setSettingsScope = __mod.setSettingsScope;",
+  "// expose the raw module so the build smoke-test can render the component",
+  "window.__dshSshHubModule = __mod;",
   "return {",
   "  apply: function (ctx) {",
   "    // Terminal Theme signal: prefer the DSH theme service; fall back to",
@@ -307,6 +309,18 @@ import vm from "node:vm";
   if (!plugin || typeof plugin.apply !== "function") {
     throw new Error("client bundle: factory did not return a Cordis plugin");
   }
+  // Render-smoke the TerminalWindow: a dangling identifier inside a component
+  // (deleted hook, mistyped import, TDZ order) only explodes at render time —
+  // renderToString surfaces it at build, not in the browser.
+  const React = require("react");
+  const ReactDOMServer = require("react-dom/server");
+  const mod = sandbox.window.__dshSshHubModule;
+  if (!mod || typeof mod.TerminalWindow !== "function") throw new Error("client bundle: TerminalWindow export missing");
+  // force the window visible so renderToString walks the full JSX (not the
+  // visible=false early return), surfacing every dangling reference.
+  if (typeof mod.setTerminalVisible === "function") mod.setTerminalVisible(true);
+  const html = ReactDOMServer.renderToString(React.createElement(mod.TerminalWindow));
+  if (typeof html !== "string") throw new Error("client bundle: TerminalWindow did not render");
   console.log("client: loader entry load smoke-test passed");
 })();
 

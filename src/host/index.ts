@@ -155,7 +155,7 @@ export function apply(ctx: any, config: any) {
     const alive = (id: any) => typeof id === "string" && registry.get(id) !== undefined;
     const items = collection.items
       .map((it: any) => {
-        if (it.kind === "tab") return alive(it.sessionId) ? it : null;
+        if (it.kind === "tab") return it.sessionId === null || alive(it.sessionId) ? it : null;
         if (it.kind === "workspace") {
           const members = it.members.filter((m: any) => alive(m.sessionId));
           const sizes = it.sizes.slice(0, members.length);

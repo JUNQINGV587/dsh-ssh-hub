@@ -19,6 +19,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "../shared/terminal-themes.mjs";
 
 import {
+  defaultCollection,
   normalizeCollection,
   addTab,
   removeTab,
@@ -1140,6 +1141,74 @@ function ServerDrawer({
   );
 }
 
+/* ---------------- shared hooks (Dock + Focus View) ---------------- */
+
+/**
+ * The theme chain, shared by both surfaces: per-browser Theme Override wins,
+ * then the defaultTerminalTheme Server Default, then the GUI scheme. Also
+ * exposes the Terminal Area surface variables and hot-swaps every open xterm
+ * (all surfaces) when the resolved theme changes.
+ */
+function useTerminalTheme() {
+  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme, getGuiScheme);
+  const [override, setOverride] = React.useState<ThemeOverride>(() => {
+    try {
+      const v = localStorage.getItem(OVERRIDE_KEY);
+      if (v === "auto" || v === "dark" || v === "light") return v;
+    } catch {
+      /* ignore */
+    }
+    return "auto";
+  });
+  const cycleOverride = () => {
+    setOverride((prev) => {
+      const next = OVERRIDE_ORDER[(OVERRIDE_ORDER.indexOf(prev) + 1) % OVERRIDE_ORDER.length];
+      try {
+        localStorage.setItem(OVERRIDE_KEY, next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+  const defaultTheme = React.useSyncExternalStore(subscribeDefaultTheme, getDefaultTheme, getDefaultTheme);
+  const resolvedTheme: "dark" | "light" =
+    override !== "auto" ? override : defaultTheme !== "auto" ? defaultTheme : guiScheme;
+
+  // Push the Server Default into the theme signal whenever the settings
+  // scope emits (hot-swaps open terminals through the effect below).
+  React.useEffect(() => {
+    const scope = getSettingsScope();
+    if (scope === null) return;
+    const push = () => pushDefaultTheme(scope.getSnapshot().value?.defaultTerminalTheme);
+    push();
+    return scope.subscribe(push);
+  }, []);
+
+  // Terminal Area surface colors, applied declaratively so they are correct
+  // the moment the surface body mounts.
+  const surfaceVars = React.useMemo<React.CSSProperties>(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    const style: Record<string, string> = {};
+    for (const [k, v] of Object.entries(th.surface)) {
+      // camelCase key -> kebab-case CSS variable (custom properties are case-sensitive)
+      const name = k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+      style["--dmst-" + name] = v;
+    }
+    return style as React.CSSProperties;
+  }, [resolvedTheme]);
+
+  // Hot-swap every open xterm instance when the resolved theme changes
+  // (no reconnect, no reload).
+  React.useEffect(() => {
+    const th = TERMINAL_THEMES[resolvedTheme];
+    for (const term of termRegistry.values()) term.options.theme = th.xterm;
+  }, [resolvedTheme]);
+
+  return { override, cycleOverride, resolvedTheme, surfaceVars };
+}
+
+
 /* ---------------- workspace tree (ADR-0006) ---------------- */
 
 /** The global workspace collection (ADR-0007): the floating window and the
@@ -1454,26 +1523,54 @@ function GroupDivider({
   );
 }
 
+/* ---------------- terminal window (frame-wide surface) ---------------- */
+
+const WIN_KEY = "dsh-ssh-hub.win";
+function loadWin() {
+  try {
+    const v = JSON.parse(localStorage.getItem(WIN_KEY) ?? "");
+    if (typeof v.x === "number" && typeof v.y === "number" && typeof v.w === "number" && typeof v.h === "number") {
+      return v;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {
+    x: Math.max(0, Math.round((window.innerWidth - 780) / 2)),
+    y: Math.max(0, Math.round((window.innerHeight - 480) / 2)),
+    w: Math.min(780, window.innerWidth - 24),
+    h: Math.min(480, window.innerHeight - 24),
+  };
+}
+function saveWin(v: { x: number; y: number; w: number; h: number }) {
+  try {
+    localStorage.setItem(WIN_KEY, JSON.stringify(v));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function TerminalWindow() {
-  const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible);
-  const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized);
+  const visible = React.useSyncExternalStore(subscribeTerminal, getTerminalVisible, getTerminalVisible);
+  const maximized = React.useSyncExternalStore(subscribeTerminal, getTerminalMaximized, getTerminalMaximized);
   const { collection, commit } = useWorkspaceState(visible);
   const [renaming, setRenaming] = React.useState<{ tab: number; text: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   /** The active item (tab = one session full-window; workspace = a flat group)
    *  and a commit writing the collection back. */
   const activeItem = collection.items[collection.activeIndex] ?? null;
+  const commitItems = React.useCallback((next: any) => commit(next), [commit]);
   /** Magnify: a workspace member fills the window (member index). */
   const [magnifiedMember, setMagnifiedMember] = React.useState<number | null>(null);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
-  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme);
+  const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme, getGuiScheme);
 
   const [tabs, setTabs] = React.useState<TermTab[]>([]);
   const [servers, setServers] = React.useState<ServerView[]>([]);
   const [defaults, setDefaults] = React.useState<ServerDefaults | null>(null);
   const [drawer, setDrawer] = React.useState(false);
   const [picker, setPicker] = React.useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = React.useState(false);
   const [win, setWin] = React.useState(loadWin);
   const [size, setSize] = React.useState({ w: 0, h: 0 });
   const [focused, setFocused] = React.useState(true);
