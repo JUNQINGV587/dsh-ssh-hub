@@ -38,9 +38,6 @@ const DEFAULT_IDLE_RECLAIM_MS = 30 * 60 * 1000;
 /** Settings-bound reclaim window in seconds (1–120; default 30 minutes). */
 const DEFAULT_IDLE_RECLAIM_SEC = 30;
 
-/**
- * @typedef {import("../shared/layout.mjs").TreeNode} TreeNode
- */
 /** Schema defaults for the `ssh-hub` settings namespace (ADR 0003). */
 const DEFAULT_SERVER_DEFAULTS: ServerDefaults = {
   defaultReadyTimeoutSec: 15,

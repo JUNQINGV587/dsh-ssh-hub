@@ -1,6 +1,6 @@
 # Flexbox n-tree layout engine supersedes the binary SplitTree
 
-Status: accepted
+Status: superseded by ADR-0010 (flat items model; the n-tree engine was removed)
 
 A tab's layout is an n-tree in Wave's flexbox model (spec #32): a node is either a block (a leaf holding one Terminal Session, or an empty slot) or an ordered list of same-direction nodes; levels alternate direction (level 1 row, level 2 column, level 3 row, …); nodes carry a unitless size whose sibling ratio decides displacement; nodes are located by `IndexArr`. This replaces the binary SplitTree of ADR-0006/0007.
 

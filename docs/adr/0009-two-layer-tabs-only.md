@@ -1,6 +1,6 @@
 # Two-layer layout state: tabs only (Workspace layer removed)
 
-Status: accepted
+Status: superseded in part by ADR-0010 (tabs are now single-session items; the n-tree per tab was removed)
 
 The layout state is `{ tabs: [{ name, tree: LayoutTree }], activeTab }`. The Workspace layer (ADR-0007) is removed: tabs are the top-level containers, served at `GET/PUT /ssh-hub/workspace` and pushed over `/workspace/events`.
 

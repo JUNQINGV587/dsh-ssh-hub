@@ -2312,6 +2312,16 @@ function TerminalWindowFrame() {
     };
   }, [visible]);
 
+  /* ---- U-22: the settings card's 管理服务器… button jumps here ---- */
+  React.useEffect(() => {
+    const onOpenServers = () => {
+      setTerminalVisible(true);
+      setDrawer(true);
+    };
+    window.addEventListener("dsh-ssh-hub:open-servers", onOpenServers);
+    return () => window.removeEventListener("dsh-ssh-hub:open-servers", onOpenServers);
+  }, []);
+
 
 
   /* ---- keyboard: Esc (maximized then close), plus basic Wave bindings.
