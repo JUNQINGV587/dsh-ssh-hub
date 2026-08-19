@@ -182,7 +182,9 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsWin.isBlur .dmsWinBar,.dmsWin.isBlur .dmsWinTool{opacity:.55}
 .dmsWin.isBlur .dmsWinBody{box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2)}
 .dmsWin.isOpening{animation:dmsWinIn .15s ease-out}
+.dmsWin.isClosing{animation:dmsWinOut .15s ease-in forwards}
 @keyframes dmsWinIn{from{transform:scale(.95);opacity:.4}to{transform:none;opacity:1}}
+@keyframes dmsWinOut{from{transform:none;opacity:1}to{transform:scale(.95);opacity:.3}}
 .dmsWinBar{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip);cursor:move;user-select:none;-webkit-user-select:none}
 .dmsWinTitle{flex:1;min-width:0;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmsWinActions{flex:none;display:flex;gap:2px}
@@ -1682,6 +1684,7 @@ export function TerminalWindow() {
   const [size, setSize] = React.useState({ w: 0, h: 0 });
   const [focused, setFocused] = React.useState(true);
   const [opening, setOpening] = React.useState(false);
+  const [closing, setClosing] = React.useState(false);
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const [moving, setMoving] = React.useState(false);
   const bodyRef = React.useRef<HTMLDivElement>(null);
@@ -1743,12 +1746,18 @@ export function TerminalWindow() {
     return () => ro.disconnect();
   }, [visible, maximized]);
 
-  /* ---- opening animation (skipped under reduced motion) ---- */
+  /* ---- opening/closing animation (skipped under reduced motion) ---- */
   React.useEffect(() => {
-    if (!visible) return;
+    if (visible) {
+      if (prefersReducedMotion()) return;
+      setOpening(true);
+      const t = setTimeout(() => setOpening(false), 170);
+      return () => clearTimeout(t);
+    }
+    // closing: keep the component mounted briefly so the reverse plays
     if (prefersReducedMotion()) return;
-    setOpening(true);
-    const t = setTimeout(() => setOpening(false), 170);
+    setClosing(true);
+    const t = setTimeout(() => setClosing(false), 160);
     return () => clearTimeout(t);
   }, [visible]);
 
@@ -1953,7 +1962,7 @@ export function TerminalWindow() {
     return m;
   }, [tree]);
 
-  if (!visible) return null;
+  if (!visible && !closing) return null;
 
   const placedCount = collectSessions(tree).length;
   const stateLabel =
@@ -1966,7 +1975,7 @@ export function TerminalWindow() {
   return (
     <div
       ref={rootRef}
-      className={"dmsWin" + (maximized ? " isMax" : "") + (focused ? "" : " isBlur") + (opening ? " isOpening" : "") + (moving ? " isMoving" : "")}
+      className={"dmsWin" + (maximized ? " isMax" : "") + (focused ? "" : " isBlur") + (opening ? " isOpening" : "") + (closing ? " isClosing" : "") + (moving ? " isMoving" : "")}
       style={maximized ? undefined : { left: win.x, top: win.y, width: win.w, height: win.h }}
       onPointerDown={() => setFocused(true)}
       role="dialog"
