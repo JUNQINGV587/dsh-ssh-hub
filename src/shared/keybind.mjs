@@ -17,8 +17,6 @@ export const ACTIONS = [
   "newTab",
   "closeBlock",
   "closeTab",
-  "splitH",
-  "splitV",
   "magnify",
 ];
 
@@ -29,8 +27,6 @@ export const DEFAULT_KEYS = {
   newTab: "Alt+t",
   closeBlock: "Alt+w",
   closeTab: "Alt+Shift+w",
-  splitH: "Alt+d",
-  splitV: "Alt+Shift+d",
   magnify: "Alt+m",
 };
 

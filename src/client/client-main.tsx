@@ -297,12 +297,31 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsWsMember{position:relative;display:flex;min-width:0;min-height:0;flex-direction:column}
 .dmsMember{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--dmst-bg,#1c1c1c);border:1px solid var(--wave-border);border-radius:8px;margin:1.5px;overflow:hidden;cursor:pointer}
 .dmsMember:hover{border-color:var(--dsw-alias-label-dimmed)}
+.dmsMember.isActive{border-color:var(--wave-accent);box-shadow:0 0 0 1px var(--wave-accent)}
 .dmsGroupDivider{flex:none;position:relative;z-index:5;background:transparent;transition:background .1s ease .5s}
 .dmsGroupDivider.isV{width:6px;cursor:col-resize}
 .dmsGroupDivider.isH{height:6px;cursor:row-resize}
 .dmsGroupDivider:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsWsOrient{position:absolute;right:10px;bottom:10px;z-index:7;height:24px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;cursor:pointer}
 .dmsWsOrient:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* Broadcast (multi-send) controls (#46). */
+.dmsBcastBtn{position:absolute;top:10px;right:10px;z-index:7;display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip,var(--dsw-bg,#1b1d23));color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;cursor:pointer}
+.dmsBcastBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsBcastBtn.isOn{color:var(--wave-accent,#58c142);border-color:var(--wave-accent,#58c142)}
+.dmsBcastBar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:9;display:flex;align-items:center;gap:8px;max-width:86%;padding:8px 10px;border-radius:10px;background:var(--dsw-bg-card,#262a33);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.45)}
+.dmsBcastHint{flex:none;color:var(--dsw-alias-label-secondary);font-size:11.5px;white-space:nowrap}
+.dmsBcastInput{flex:1;min-width:120px;height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-bg-input,transparent);color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;outline:none}
+.dmsBcastInput:focus{border-color:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff))}
+.dmsBcastSend{flex:none;height:26px;padding:0 12px;border-radius:7px;border:1px solid transparent;background:var(--dsw-alias-accent,var(--dsw-accent,#4c8dff));color:#fff;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dmsBcastSend:disabled{opacity:.45;cursor:default}
+.dmsBcastCancel{flex:none;height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-family:Inter,var(--dsw-font-family);font-size:12px;cursor:pointer}
+.dmsBcastCancel:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dmsMember.isSelected{border-color:var(--wave-accent,#58c142);box-shadow:0 0 0 1px var(--wave-accent,#58c142)}
+.dmsMember.isFlash{animation:dmsFlash .6s ease-out}
+@keyframes dmsFlash{0%{box-shadow:0 0 0 3px var(--wave-accent,#58c142)}100%{box-shadow:0 0 0 0 transparent}}
+.dmsMemberCheck{position:absolute;top:6px;right:6px;z-index:7;width:18px;height:18px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--wave-border);background:rgba(0,0,0,.5);color:#fff;pointer-events:none}
+.dmsMemberCheck.isOn{background:var(--wave-accent,#58c142);border-color:var(--wave-accent,#58c142)}
 
 /* Esc exit hint: persistent while magnified or maximized (U-4). */
 .dmsEscHint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:11.5px;font-weight:500;box-shadow:0 4px 14px rgba(0,0,0,.3);backdrop-filter:blur(4px)}
@@ -437,6 +456,8 @@ function getDefaultTheme(): DefaultTheme {
 
 /** Open xterm instances by tab id, for hot theme swapping. */
 const termRegistry = new Map<string, Terminal>();
+/** #46: live ws by tab id — the broadcast bar targets these to send input. */
+const wsRegistry = new Map<string, WebSocket>();
 
 /* ---------------- helpers ---------------- */
 
@@ -609,6 +630,20 @@ const Icon = {
       <rect x={8} y={8} width={4.4} height={4.4} rx={1.1} stroke="currentColor" strokeWidth={1.05} />
     </svg>
   ),
+  check: () => (
+    <svg width={11} height={11} viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M2.2 6.4L4.6 8.8L9.8 3.2" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  broadcast: () => (
+    <svg width={12} height={12} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M2.9 11.1C1.7 9.9 1 8.3 1 6.5S1.7 3.1 2.9 1.9" stroke="currentColor" strokeWidth={1.2} strokeLinecap="round" />
+      <path d="M11.1 1.9C12.3 3.1 13 4.7 13 6.5S12.3 9.9 11.1 11.1" stroke="currentColor" strokeWidth={1.2} strokeLinecap="round" />
+      <path d="M5 9.5C4.4 8.9 4 8.2 4 6.5S4.4 4.1 5 3.5" stroke="currentColor" strokeWidth={1.2} strokeLinecap="round" />
+      <path d="M9 3.5C9.6 4.1 10 4.8 10 6.5S9.6 8.9 9 9.5" stroke="currentColor" strokeWidth={1.2} strokeLinecap="round" />
+      <circle cx={7} cy={6.5} r={1.1} fill="currentColor" />
+    </svg>
+  ),
   plus: () => (
     <svg width={12} height={12} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M8.64453 1.5V7.34961H14.5V8.65039H8.64453V14.5H7.34473V8.65039H1.5V7.34961H7.34473V1.5H8.64453Z" fill="currentColor" />
@@ -770,6 +805,7 @@ function XtermPane({
       const next = new WebSocket(proto + "//" + location.host + PREFIX + "/ws/" + tab.id);
       ws = next;
       wsRef.current = next;
+      wsRegistry.set(tab.id, next); // #46: broadcast targets
       next.onopen = () => {
         onStatusRef.current({
           status: initialStatus.current === "closed" ? "closed" : "live",
@@ -851,6 +887,7 @@ function XtermPane({
       closedByUs.current = true;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       termRegistry.delete(registryKey);
+      wsRegistry.delete(tab.id); // #46
       el.removeEventListener("mouseup", onMouseUp);
       el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("contextmenu", onCtx);
@@ -1553,20 +1590,35 @@ function MemberTile({
   onStatus,
   onMagnify,
   isMagnified,
+  isFocused,
+  onFocus,
   onClose,
   onRemove,
   onReconnect,
   quiet,
+  selectMode,
+  selected,
+  onToggleSelect,
+  flash,
 }: {
   member: { sessionId: string; name: string };
   tabs: TermTab[];
   onStatus: (tabId: string, patch: Partial<TermTab>) => void;
   onMagnify: () => void;
   isMagnified: boolean;
+  /** #45: this member is the focused one (keyboard target). */
+  isFocused: boolean;
+  onFocus: () => void;
   onClose: () => void;
   onRemove: () => void;
   onReconnect?: (tab: TermTab) => void;
   quiet?: boolean;
+  /** #46: broadcast select mode — click toggles selection, no magnify. */
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  /** #46: just received broadcast input — brief visual flash. */
+  flash?: boolean;
 }) {
   const tab = tabs.find((t) => t.id === member.sessionId);
   const dotClass =
@@ -1578,7 +1630,20 @@ function MemberTile({
           ? "dmsBlockDot isLive"
           : "dmsBlockDot isClosed";
   return (
-    <div className="dmsMember" onClick={() => onMagnify()}>
+    <div
+      className={"dmsMember" + (isFocused ? " isActive" : "") + (selectMode && selected ? " isSelected" : "") + (flash ? " isFlash" : "")}
+      onClick={() => {
+        if (selectMode === true) {
+          onToggleSelect?.();
+          return;
+        }
+        onFocus();
+        onMagnify();
+      }}
+    >
+      {selectMode === true && (
+        <span className={"dmsMemberCheck" + (selected ? " isOn" : "")}>{selected ? Icon.check() : ""}</span>
+      )}
       <span className="dmsBlockBadge" title={member.name}>
         <span className={dotClass} />
         <span className="dmsBlockBadgeNum">{member.name}</span>
@@ -1590,6 +1655,7 @@ function MemberTile({
           aria-label={isMagnified ? "还原" : "放大"}
           onClick={(e) => {
             e.stopPropagation();
+            onFocus();
             onMagnify();
           }}
         >
@@ -1618,6 +1684,8 @@ function ItemsView({
   tabs,
   magnifiedMember,
   onMagnifyMember,
+  activeMember,
+  onFocusMember,
   onStatus,
   onCommit,
   onCloseItem,
@@ -1631,6 +1699,9 @@ function ItemsView({
   tabs: TermTab[];
   magnifiedMember: number | null;
   onMagnifyMember: (idx: number | null) => void;
+  /** #45: focused member index inside the active workspace. */
+  activeMember: number | null;
+  onFocusMember: (idx: number | null) => void;
   onStatus: (tabId: string, patch: Partial<TermTab>) => void;
   onCommit: (next: any) => void;
   onCloseItem: (idx: number) => void;
@@ -1640,6 +1711,40 @@ function ItemsView({
   onRemoveMember?: (sessionId: string) => void;
   quiet?: boolean;
 }) {
+  // #46: broadcast mode — select members, type once, send to all.
+  const [bcastOn, setBcastOn] = React.useState(false);
+  const [bcastSel, setBcastSel] = React.useState<Set<number>>(new Set());
+  const [bcastText, setBcastText] = React.useState("");
+  const [flashSet, setFlashSet] = React.useState<Set<number>>(new Set());
+  const flashTimer = React.useRef<number | null>(null);
+  const itKind = collection.items[collection.activeIndex]?.kind;
+  React.useEffect(() => {
+    if (itKind !== "workspace") {
+      setBcastOn(false);
+      setBcastSel(new Set());
+      setBcastText("");
+    }
+  }, [itKind]);
+  const sendBroadcast = () => {
+    const text = bcastText.trim();
+    if (text.length === 0) return;
+    const wsItem = collection.items[collection.activeIndex];
+    if (wsItem?.kind !== "workspace") return;
+    const targets: number[] = [];
+    wsItem.members.forEach((m: any, i: number) => {
+      if (!bcastSel.has(i)) return;
+      const w = wsRegistry.get(m.sessionId);
+      if (w !== undefined && w.readyState === WebSocket.OPEN) {
+        w.send(text + "\r");
+        targets.push(i);
+      }
+    });
+    if (targets.length === 0) return;
+    setFlashSet(new Set(targets));
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlashSet(new Set()), 600);
+    setBcastText("");
+  };
   const it = collection.items[collection.activeIndex] ?? null;
   if (it === null) {
     return (
@@ -1693,6 +1798,8 @@ function ItemsView({
                 onStatus={onStatus}
                 onMagnify={() => onMagnifyMember(magnifiedMember === idx ? null : idx)}
                 isMagnified={magnifiedMember === idx}
+                isFocused={activeMember === idx}
+                onFocus={() => onFocusMember(idx)}
                 onClose={() => onCloseItem(collection.activeIndex)}
                 onRemove={() => {
                   // The member's session returns to the unplaced list and keeps
@@ -1703,6 +1810,17 @@ function ItemsView({
                 }}
                 onReconnect={onReconnect}
                 quiet={quiet}
+                selectMode={bcastOn}
+                selected={bcastSel.has(idx)}
+                onToggleSelect={() =>
+                  setBcastSel((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(idx)) next.delete(idx);
+                    else next.add(idx);
+                    return next;
+                  })
+                }
+                flash={flashSet.has(idx)}
               />
             </div>
             {i < shown.length - 1 && (
@@ -1718,13 +1836,48 @@ function ItemsView({
         );
       })}
       {magnifiedMember === null && (
-        <button
-          className="dmsWsOrient"
-          title="切换并排方向（左右 / 上下）"
-          onClick={() => onCommit(setOrientation(collection, collection.activeIndex, it.orientation === "h" ? "v" : "h"))}
-        >
-          {it.orientation === "h" ? "⇄ 上下" : "⇅ 左右"}
-        </button>
+        <>
+          <button
+            className={"dmsBcastBtn" + (bcastOn ? " isOn" : "")}
+            title="广播：选择多个成员，输入一次并发送到所选"
+            aria-label="广播"
+            onClick={() => setBcastOn((v) => !v)}
+          >
+            {bcastOn ? Icon.check() : Icon.broadcast()} 广播
+          </button>
+          <button
+            className="dmsWsOrient"
+            title="切换并排方向（左右 / 上下）"
+            onClick={() => onCommit(setOrientation(collection, collection.activeIndex, it.orientation === "h" ? "v" : "h"))}
+          >
+            {it.orientation === "h" ? "⇄ 上下" : "⇅ 左右"}
+          </button>
+        </>
+      )}
+      {bcastOn && magnifiedMember === null && (
+        <div className="dmsBcastBar">
+          <span className="dmsBcastHint">
+            {bcastSel.size === 0 ? "点击成员选择目标" : `发送到 ${bcastSel.size} 个成员`}
+          </span>
+          <input
+            className="dmsBcastInput"
+            value={bcastText}
+            onChange={(e) => setBcastText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") sendBroadcast();
+              if (e.key === "Escape") setBcastOn(false);
+            }}
+            placeholder="输入命令，Enter 发送"
+            autoFocus
+            aria-label="广播输入"
+          />
+          <button className="dmsBcastSend" onClick={sendBroadcast} disabled={bcastSel.size === 0 || bcastText.trim().length === 0}>
+            发送
+          </button>
+          <button className="dmsBcastCancel" onClick={() => setBcastOn(false)}>
+            退出
+          </button>
+        </div>
       )}
     </div>
   );
@@ -1913,6 +2066,12 @@ function TerminalWindowFrame() {
   const commitItems = React.useCallback((next: any) => commit(next), [commit]);
   /** Magnify: a workspace member fills the window (member index). */
   const [magnifiedMember, setMagnifiedMember] = React.useState<number | null>(null);
+  /** #45: the focused member inside the active workspace (Alt+w targets it,
+    *  Alt+m magnifies it, Alt+1-9 moves it). Reset on item switch. */
+  const [activeMember, setActiveMember] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    setActiveMember(null);
+  }, [collection.activeIndex]);
   const { override, cycleOverride, resolvedTheme, surfaceVars } = useTerminalTheme();
   const guiScheme = React.useSyncExternalStore(subscribeGuiScheme, getGuiScheme, getGuiScheme);
 
@@ -2100,15 +2259,38 @@ function TerminalWindowFrame() {
         return;
       }
       if (match("closeTab") || match("closeBlock")) {
-        // both map to closing the active item (a tab or the focused member)
+        // #45: in a workspace, closeTab (Alt+Shift+w) dissolves the group;
+        // closeBlock (Alt+w) removes only the focused member (its session
+        // returns to the unplaced list) — or dissolves when nothing is
+        // focused. On a tab both close the item.
         e.preventDefault();
-        closeTabAt(collection.activeIndex ?? 0);
+        const it = activeItem;
+        if (it !== null && it.kind === "workspace") {
+          if (match("closeTab")) {
+            commit(ungroup(collection, collection.activeIndex));
+          } else if (activeMember !== null) {
+            const r = removeMember(collection, collection.activeIndex, activeMember);
+            commitItems(r.collection);
+            if (r.member !== null) {
+              showToast({
+                text: "会话仍在运行，已放入未放置列表",
+                actionLabel: "立即结束",
+                onAction: () => killSession(r.member!.sessionId),
+              });
+            }
+            setActiveMember(null);
+          } else {
+            commit(ungroup(collection, collection.activeIndex));
+          }
+        } else {
+          closeTabAt(collection.activeIndex ?? 0);
+        }
         return;
       }
       if (match("magnify")) {
         e.preventDefault();
         if (magnifiedMember !== null) setMagnifiedMember(null);
-        else if (activeItem?.kind === "workspace") setMagnifiedMember(0);
+        else if (activeItem?.kind === "workspace") setMagnifiedMember(activeMember ?? 0);
         return;
       }
       if (e.key === "F2") {
@@ -2116,18 +2298,23 @@ function TerminalWindowFrame() {
         setRenaming({ tab: collection.activeIndex ?? 0, text: collection.items[collection.activeIndex ?? 0]?.name ?? "" });
         return;
       }
-      // Fixed Wave-style numeric binding: Alt+1-9 switches items.
+      // Fixed Wave-style numeric binding: Alt+1-9 switches items; inside a
+      // workspace it moves the focused member instead.
       if (!e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
         const target = Number(e.key) - 1;
-        if (target < collection.items.length) commit(setActiveIndex(collection, target));
+        if (activeItem?.kind === "workspace") {
+          if (target < activeItem.members.length) setActiveMember(target);
+        } else if (target < collection.items.length) {
+          commit(setActiveIndex(collection, target));
+        }
         return;
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, collection, activeItem, magnifiedMember]);
+  }, [visible, collection, activeItem, magnifiedMember, activeMember]);
 
   /* ---- tab operations ---- */
   const newTab = () => {
@@ -2654,6 +2841,8 @@ function TerminalWindowFrame() {
             tabs={tabs}
             magnifiedMember={magnifiedMember}
             onMagnifyMember={setMagnifiedMember}
+            activeMember={activeMember}
+            onFocusMember={setActiveMember}
             onStatus={(tabId, patch) => setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)))}
             onCommit={commitItems}
             onCloseItem={closeTabAt}

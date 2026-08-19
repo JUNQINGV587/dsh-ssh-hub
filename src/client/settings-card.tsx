@@ -149,17 +149,13 @@ const ACTION_LABELS: Record<string, string> = {
   newTab: "新标签页",
   closeBlock: "关闭块（移出会话）",
   closeTab: "关闭标签页",
-  splitH: "向右分割",
-  splitV: "向下分割",
   magnify: "放大 / 还原块",
 };
 const ACTION_HINTS: Record<string, string> = {
   toggleWindow: "例如 Ctrl+Shift+`；+ 连接修饰键与键位",
   newTab: "Wave 预设 Alt+t",
-  closeBlock: "Wave 预设 Alt+w",
-  closeTab: "Wave 预设 Alt+Shift+w",
-  splitH: "Wave 预设 Alt+d",
-  splitV: "Wave 预设 Alt+Shift+d",
+  closeBlock: "Wave 预设 Alt+w（组合内关闭聚焦成员）",
+  closeTab: "Wave 预设 Alt+Shift+w（组合内解散组合）",
   magnify: "Wave 预设 Alt+m",
 };
 
