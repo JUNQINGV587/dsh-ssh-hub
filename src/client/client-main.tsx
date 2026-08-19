@@ -2158,4 +2158,7 @@ function ServerPicker({
   );
 }
 
-export default TerminalPanel;
+// TerminalWindow replaced the Dock-era TerminalPanel (ADR-0006); the default
+// export must name a real component — a dangling identifier here previously
+// shipped as an undefined global and broke the loader entry at runtime.
+export default TerminalWindow;

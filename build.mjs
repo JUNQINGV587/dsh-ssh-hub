@@ -216,6 +216,100 @@ const finalJs = [
 
 writeFileSync(out("./lib/client.js"), finalJs);
 
+/* ------------------------------------------------------------------ */
+/* 3. smoke-test the client bundle in the ModuleLoader harness.        */
+/* ------------------------------------------------------------------ */
+/* The loader entry must evaluate without throwing at load time.       */
+/* esbuild emits a bare identifier that is never declared (e.g. a      */
+/* renamed component left behind in `export default X`) as an          */
+/* undefined global, so a broken bundle used to build and ship         */
+/* silently and only explode in the browser — "X is not defined"       */
+/* when the factory runs. Evaluating the factory here, with browser    */
+/* stubs, catches that class before the artifact is committed.         */
+import vm from "node:vm";
+
+(function smokeTestClientBundle() {
+  let captured = null;
+  const noopEl = () => ({
+    style: {},
+    getContext: () => null,
+    classList: {
+      add() {},
+      remove() {},
+      contains() {
+        return false;
+      },
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    appendChild() {},
+    setAttribute() {},
+    getAttribute() {
+      return null;
+    },
+  });
+  const sandbox = {
+    window: {
+      __ModuleLoader__: {
+        load(entry) {
+          captured = entry;
+        },
+      },
+      PointerEvent: undefined,
+      maxTouchPoints: 0,
+      matchMedia: undefined,
+      localStorage: undefined,
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    matchMedia: undefined,
+    localStorage: undefined,
+    document: {
+      queryCommandSupported: () => false,
+      getElementById: () => null,
+      createElement: noopEl,
+      head: { appendChild() {} },
+      body: { appendChild() {} },
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    navigator: {
+      userAgent:
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      platform: "Linux x86_64",
+      language: "en-US",
+      languages: ["en-US"],
+      maxTouchPoints: 0,
+      clipboard: undefined,
+      keyboard: undefined,
+    },
+    requestAnimationFrame: undefined,
+    cancelAnimationFrame: undefined,
+    performance: undefined,
+    queueMicrotask,
+    console,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+  };
+  sandbox.globalThis = sandbox;
+  sandbox.self = sandbox.window;
+  vm.createContext(sandbox);
+  vm.runInContext(finalJs, sandbox, { filename: "lib/client.js" });
+  if (!captured) {
+    throw new Error("client bundle: loader entry was not registered");
+  }
+  const plugin = captured.factory((id) => {
+    if (id === "react") return require("react");
+    throw new Error("client bundle: unexpected require(" + id + ")");
+  });
+  if (!plugin || typeof plugin.apply !== "function") {
+    throw new Error("client bundle: factory did not return a Cordis plugin");
+  }
+  console.log("client: loader entry load smoke-test passed");
+})();
+
 /* ship xterm.css into lib (served by the host half) */
 try {
   const xtermCssPath = require.resolve("@xterm/xterm/css/xterm.css");
