@@ -207,8 +207,6 @@ textarea.dmsInput{height:auto;min-height:64px;padding:8px 10px;resize:vertical;f
 .dmsWin.isClosing{animation:dmsWinOut .15s ease-in forwards}
 @keyframes dmsWinIn{from{transform:scale(.95);opacity:.4}to{transform:none;opacity:1}}
 @keyframes dmsWinOut{from{transform:none;opacity:1}to{transform:scale(.95);opacity:.3}}
-.dmsWinBar{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px;border-bottom:1px solid var(--wave-border);background:var(--wave-bg);cursor:move;user-select:none;-webkit-user-select:none}
-.dmsWinTitle{flex:1;min-width:0;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--wave-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmsWinActions{flex:none;display:flex;gap:2px}
 .dmsWinAction{width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;display:grid;place-items:center;padding:0}
 .dmsWinAction:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
@@ -292,24 +290,19 @@ button.dmsSidebarRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dmsDrop-inner-after[data-dir="col"]{top:33%;right:2px;width:34%;height:34%}
 .dmsDrop-swap{left:50%;top:50%;width:22%;height:22%;transform:translate(-50%,-50%);background:rgba(88,193,66,.5);border-radius:8px}
 .dmsBlock.isDragging{opacity:.6}
-.dmsBlockBar{flex:none;height:26px;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;border-bottom:1px solid var(--wave-border);background:var(--wave-panel);font-size:11.5px;color:var(--wave-secondary);user-select:none;-webkit-user-select:none}
-.dmsBlockDotWrap{flex:none;display:grid;place-items:center}
-.dmsBlockDot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dmsBlockDrag{position:absolute;top:0;left:0;right:0;height:8px;z-index:6;cursor:grab}
+.dmsBlockBadge{position:absolute;top:4px;left:6px;z-index:6;display:inline-flex;align-items:center;gap:4px;pointer-events:none;font-size:10px;color:var(--wave-secondary)}
+.dmsBlockBadgeNum{min-width:14px;height:14px;display:grid;place-items:center;border-radius:4px;background:rgba(0,0,0,.45);color:#ddd;font-weight:600;padding:0 3px}
+.dmsBlockDot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-label-tertiary);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .dmsBlockDot.isConnecting{background:#e8b339;animation:dmsPulse 1s ease-in-out infinite}
 .dmsBlockDot.isLive{background:#2ee62e}
 .dmsBlockDot.isClosed{background:#e74856}
-.dmsBlockNum{flex:none;min-width:16px;height:16px;display:grid;place-items:center;border-radius:5px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:600}
-.dmsBlockLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dmsBlockActions{flex:none;display:none;align-items:center;gap:1px}
-.dmsBlock:hover .dmsBlockActions{display:flex}
-.dmsSplitBtn,.dmsBlockRemove{width:20px;height:20px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;font-size:11px}
-.dmsSplitBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dmsSplitBtn-left:hover{color:#e5484d}
-.dmsSplitBtn-right:hover{color:#2ee62e}
-.dmsSplitBtn-top:hover{color:#4cc2ff}
-.dmsSplitBtn-bottom:hover{color:#4c8dff}
-.dmsBlockRemove:hover{background:rgba(231,72,86,.2);color:#ff8b93}
-.dmsBlockEmpty{position:absolute;inset:26px 0 0;display:flex;align-items:center;justify-content:center;background:transparent;width:100%;cursor:pointer}
+.dmsBlockFloat{position:absolute;top:3px;right:5px;z-index:6;display:none;align-items:center;gap:1px;background:rgba(0,0,0,.35);border-radius:6px;padding:1px}
+.dmsBlock:hover .dmsBlockFloat{display:flex}
+.dmsSplitBtn,.dmsBlockRemove{width:20px;height:20px;border:none;background:transparent;color:#ddd;border-radius:5px;cursor:pointer;display:grid;place-items:center;padding:0;font-size:11px}
+.dmsSplitBtn:hover{background:rgba(255,255,255,.15);color:#fff}
+.dmsBlockRemove:hover{background:rgba(231,72,86,.35);color:#ff8b93}
+.dmsBlockEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:transparent;width:100%;cursor:pointer;color:var(--wave-secondary);font-size:12px;font-weight:500}
 .dmsBlockEmpty:hover{background:var(--dsw-alias-interactive-bg-hover)}
 
 /* Session list panel */
@@ -1566,44 +1559,34 @@ function BlockView({
       onPointerEnter={trackHover}
       onPointerMove={trackHover}
     >
-      <div
-        className="dmsBlockBar"
-        title={sessionId !== null ? tab?.label ?? sessionId : "空块"}
-        onPointerDown={startBlockDrag}
-        onDoubleClick={(e) => {
-          if ((e.target as HTMLElement).closest("button")) return;
-          onMagnify(path);
-        }}
-      >
-        <span className="dmsBlockDotWrap">
-          <span className={dotClass} />
-        </span>
-        <span className="dmsBlockNum">{number}</span>
-        <span className="dmsBlockLabel">{sessionId !== null ? tab?.label ?? sessionId : "空"}</span>
-        <span className="dmsBlockActions">
-          <button
-            className="dmsSplitBtn"
-            title={isMagnified ? "还原（Alt+m / Esc）" : "放大此块（Alt+m）"}
-            aria-label={isMagnified ? "还原" : "放大"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onMagnify(path);
-            }}
-          >
-            {isMagnified ? Icon.minimize() : Icon.maximize()}
-          </button>
-          <button className="dmsBlockRemove" title="移除（会话回到未放置清单）" aria-label="移除" onClick={(e) => { e.stopPropagation(); remove(); }}>
-            {Icon.close()}
-          </button>
-        </span>
-      </div>
+      <div className="dmsBlockDrag" onPointerDown={startBlockDrag} title={sessionId !== null ? tab?.label ?? sessionId : "空块"} />
+      <span className="dmsBlockBadge" title={sessionId !== null ? tab?.label ?? sessionId : "空块"}>
+        <span className={dotClass} />
+        <span className="dmsBlockBadgeNum">{number}</span>
+      </span>
+      <span className="dmsBlockFloat">
+        <button
+          className="dmsSplitBtn"
+          title={isMagnified ? "还原（Alt+m / Esc）" : "放大此块（Alt+m）"}
+          aria-label={isMagnified ? "还原" : "放大"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMagnify(path);
+          }}
+        >
+          {isMagnified ? Icon.minimize() : Icon.maximize()}
+        </button>
+        <button className="dmsBlockRemove" title="移除（会话回到未放置清单）" aria-label="移除" onClick={(e) => { e.stopPropagation(); remove(); }}>
+          {Icon.close()}
+        </button>
+      </span>
       {sessionId === null ? (
         <div
           className="dmsBlockEmpty"
           title="空块"
           onClick={() => onEmptyClick(path)}
         >
-          <span className="dmsBlockEmptyHint" aria-hidden />
+          <span className="dmsBlockEmptyHint">空</span>
         </div>
       ) : (
         <XtermPane tab={tab ?? { id: sessionId, serverId: "", label: "…", status: "connecting" }} active={true} surface="window" onStatus={(patch) => onStatus(sessionId, patch)} />
@@ -2061,7 +2044,7 @@ export function TerminalWindow() {
   /* ---- window chrome: move (clamped) / resize / maximize ---- */
   const startMove = (e: React.PointerEvent) => {
     if (e.button !== 0 || maximized) return;
-    if ((e.target as HTMLElement).closest("button")) return;
+    if ((e.target as HTMLElement).closest("button, .dmsTab, .dmsWsBtn, .dmsTabAdd")) return;
     e.preventDefault();
     const sx = e.clientX - win.x;
     const sy = e.clientY - win.y;
@@ -2116,27 +2099,6 @@ export function TerminalWindow() {
   };
 
   const toggleMax = () => setTerminalMaximized(!getTerminalMaximized());
-  /** Self-rolled double-click: two clicks < 300ms apart and < 4px apart.
-   *  A just-finished drag suppresses the click entirely. */
-  const onBarClick = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest("button")) return;
-    if (movedRef.current) {
-      movedRef.current = false;
-      return;
-    }
-    const now = Date.now();
-    const prev = lastClickRef.current;
-    if (
-      prev !== null &&
-      now - prev.t < 300 &&
-      Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 4
-    ) {
-      lastClickRef.current = null;
-      toggleMax();
-      return;
-    }
-    lastClickRef.current = { t: now, x: e.clientX, y: e.clientY };
-  };
 
   /* ---- tree mutations ---- */
   const focusBlock = (path: number[]) => setActivePath(path);
@@ -2234,27 +2196,7 @@ export function TerminalWindow() {
       role="dialog"
       aria-label="SSH 终端"
     >
-      <div className="dmsWinBar" onPointerDown={startMove} onClick={onBarClick}>
-        <span className="dmsWinTitle">{Icon.terminal()} SSH 终端{stateLabel !== "" ? " · " + stateLabel : ""}</span>
-        <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
-          <button className={"dmsWinAction" + (sidebarOpen ? " isOn" : "")} title="Widgets（服务器 / 未放置会话）" aria-label="Widgets" onClick={() => setSidebarOpen((v) => !v)}>
-            {Icon.list()}
-          </button>
-          <button className="dmsWinAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
-            {Icon.gear()}
-          </button>
-          <button className="dmsWinAction" title={"终端主题：" + OVERRIDE_LABEL[override]} aria-label="终端主题" onClick={cycleOverride}>
-            {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
-          </button>
-          <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
-            {maximized ? Icon.minimize() : Icon.maximize()}
-          </button>
-          <button className="dmsWinAction" title="收起（Esc）" aria-label="收起" onClick={() => setTerminalVisible(false)}>
-            {Icon.close()}
-          </button>
-        </span>
-      </div>
-      <div className="dmsWinTabs">
+      <div className="dmsWinTabs" onPointerDown={startMove}>
         <button className="dmsWsBtn" title="工作区" aria-label="工作区" onClick={() => setWsOpen((v) => !v)}>
           {Icon.terminal()} {ws.name}
         </button>
@@ -2304,6 +2246,23 @@ export function TerminalWindow() {
         <button className="dmsTabAdd" title="新标签页（Alt+t）" aria-label="新标签页" onClick={newTab}>
           {Icon.plus()}
         </button>
+        <span className="dmsWinActions" onClick={(e) => e.stopPropagation()}>
+          <button className={"dmsWinAction" + (sidebarOpen ? " isOn" : "")} title="Widgets（服务器 / 未放置会话）" aria-label="Widgets" onClick={() => setSidebarOpen((v) => !v)}>
+            {Icon.list()}
+          </button>
+          <button className="dmsWinAction" title="服务器管理" aria-label="服务器管理" onClick={() => setDrawer(true)}>
+            {Icon.gear()}
+          </button>
+          <button className="dmsWinAction" title={"终端主题：" + OVERRIDE_LABEL[override]} aria-label="终端主题" onClick={cycleOverride}>
+            {override === "auto" ? Icon.autoTheme() : override === "dark" ? Icon.moon() : Icon.sun()}
+          </button>
+          <button className="dmsWinAction" title={maximized ? "还原窗口" : "最大化"} aria-label="最大化/还原" onClick={toggleMax}>
+            {maximized ? Icon.minimize() : Icon.maximize()}
+          </button>
+          <button className="dmsWinAction" title="收起（Esc）" aria-label="收起" onClick={() => setTerminalVisible(false)}>
+            {Icon.close()}
+          </button>
+        </span>
         {wsOpen && (
           <div className="dmsWsSwitcher">
             <div className="dmsWsTitle">工作区</div>
