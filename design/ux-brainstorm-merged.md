@@ -10,8 +10,9 @@
 - ✅ **U-1~U-5 已实现**（commit：一级 UX 修复，含 host `/sessions` 新增 `lastDetachedAt`/`reclaimAfterMs`、设置卡新增「会话回收时长」、RightSidebar 会话面板、新建组合/加入当前、Esc 逐级退出、错误分类错误面、WS 自动重连、关标签 toast、后台会话计数）。
 - ✅ **UX-0001/0002/0003（状态点/活动指示/回收可见性）+ U-8 布局恢复 已实现**（commit b5deff6，关闭 #43/#44）。
 - ✅ **U-9 键盘契约 + U-16 广播 已实现**（commit ef0334c，关闭 #45/#46）：聚焦成员（点击块/Alt+1-9，强调描边），Alt+w 只移除聚焦成员、Alt+Shift+w 解散组合、Alt+m 放大聚焦成员；组合视图广播按钮 → 多选成员 → 输入一次发送到所选，接收端闪烁。死绑定 splitH/splitV 已移除。
+- ✅ **#41 拖放 已实现**（commit a77109c，关闭 #41）：拖标签到标签合并成组、拖到组合标签追加成员（目标高亮）；组内拖成员排序（前/后/互换）；拖成员到标签栏变回独立标签。
 - ✅ **#42 部分认领**：CONTEXT.md 术语表已更新到 flat 模型（Tab=一个会话、新增 Workspace 条目、删除 Layout Tree），README 中英文已修正漂移。
-- ⏳ 其余 U-10~U-29 留在本文档作为 backlog（含 #41 拖放、#42 新 ADR + 删遗留文件 + README 完整重写）。
+- ⏳ 剩余：#42 新 ADR（flat groups 取代 n-tree）+ 删除 splittree.mjs/layout.mjs 遗留 + README 完整重写；md 中其余 U-10~U-29（首次引导 U-10、并排/吸附形态 U-14、块标识层级 U-17、会话颜色/命名 U-18 等）。
 
 ---
 
